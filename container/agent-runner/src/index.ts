@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  maxBudgetUsd?: number;
 }
 
 interface ContainerOutput {
@@ -407,12 +408,16 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__linear-server__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
+      ...(containerInput.maxBudgetUsd !== undefined
+        ? { maxBudgetUsd: containerInput.maxBudgetUsd }
+        : {}),
       mcpServers: {
         nanoclaw: {
           command: 'node',
@@ -423,6 +428,13 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(sdkEnv.LINEAR_API_KEY ? {
+          'linear-server': {
+            type: 'http' as const,
+            url: 'https://mcp.linear.app/mcp',
+            headers: { Authorization: `Bearer ${sdkEnv.LINEAR_API_KEY}` },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

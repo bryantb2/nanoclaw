@@ -288,6 +288,48 @@ export class SlackChannel implements Channel {
       this.flushing = false;
     }
   }
+
+  async uploadFile(params: {
+    channelId: string;
+    filePath: string;
+    threadTs?: string;
+    title?: string;
+    comment?: string;
+  }): Promise<void> {
+    const { default: fs } = await import('fs');
+    const fileContent = fs.readFileSync(params.filePath);
+    const fileName = params.filePath.split('/').pop() ?? 'file';
+
+    // Step 1: get upload URL
+    const urlResp = await this.app.client.files.getUploadURLExternal({
+      filename: fileName,
+      length: fileContent.length,
+      ...(params.title ? { title: params.title } : {}),
+    });
+    if (!urlResp.ok || !urlResp.upload_url || !urlResp.file_id) {
+      throw new Error(`getUploadURLExternal failed: ${urlResp.error}`);
+    }
+
+    // Step 2: upload the file bytes
+    await fetch(urlResp.upload_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: fileContent,
+    });
+
+    // Step 3: complete the upload
+    await this.app.client.files.completeUploadExternal({
+      files: [{ id: urlResp.file_id, title: params.title ?? fileName }],
+      channel_id: params.channelId,
+      ...(params.threadTs ? { thread_ts: params.threadTs } : {}),
+      ...(params.comment ? { initial_comment: params.comment } : {}),
+    });
+
+    logger.info(
+      { channelId: params.channelId, filePath: params.filePath },
+      'File uploaded to Slack',
+    );
+  }
 }
 
 registerChannel('slack', (opts: ChannelOpts) => {

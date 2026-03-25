@@ -33,6 +33,7 @@ export class GroupQueue {
   private waitingGroups: string[] = [];
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
+  private onMessageQueuedFn: ((groupJid: string) => void) | null = null;
   private shuttingDown = false;
 
   private getGroup(groupJid: string): GroupState {
@@ -59,6 +60,10 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
+  setOnMessageQueued(fn: (groupJid: string) => void): void {
+    this.onMessageQueuedFn = fn;
+  }
+
   enqueueMessageCheck(groupJid: string): void {
     if (this.shuttingDown) return;
 
@@ -67,6 +72,7 @@ export class GroupQueue {
     if (state.active) {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Container active, message queued');
+      this.onMessageQueuedFn?.(groupJid);
       return;
     }
 

@@ -179,6 +179,7 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        ...(task.max_budget_usd != null ? { maxBudgetUsd: task.max_budget_usd } : {}),
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

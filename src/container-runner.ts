@@ -3,6 +3,7 @@
  * Spawns agent execution in containers and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
+import { createSign } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -16,6 +17,7 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
+import { deleteInFlightTask, insertInFlightTask } from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -30,6 +32,40 @@ import { RegisteredGroup } from './types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
+const GITHUB_APP_ID = '3043813';
+const GITHUB_INSTALLATION_ID = '115016418';
+
+function createGitHubAppJwt(privateKey: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 600, iss: GITHUB_APP_ID })).toString('base64url');
+  const signingInput = `${header}.${payload}`;
+  const sign = createSign('RSA-SHA256');
+  sign.update(signingInput);
+  return `${signingInput}.${sign.sign(privateKey, 'base64url')}`;
+}
+
+async function getGitHubInstallationToken(privateKey: string): Promise<string> {
+  const jwt = createGitHubAppJwt(privateKey);
+  const resp = await fetch(
+    `https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'nanoclaw',
+      },
+    },
+  );
+  if (!resp.ok) {
+    throw new Error(`GitHub token request failed: ${resp.status} ${await resp.text()}`);
+  }
+  const data = (await resp.json()) as { token: string };
+  return data.token;
+}
+
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -42,6 +78,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  maxBudgetUsd?: number;
 }
 
 export interface ContainerOutput {
@@ -200,6 +237,15 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Output directory: writable by container, readable by host IPC for file uploads
+  const outputDir = path.join(DATA_DIR, group.folder, 'output');
+  fs.mkdirSync(outputDir, { recursive: true });
+  mounts.push({
+    hostPath: outputDir,
+    containerPath: '/workspace/output',
+    readonly: false,
+  });
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -217,8 +263,12 @@ async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   agentIdentifier?: string,
+  extraEnv: Record<string, string> = {},
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Memory limits per container
+  args.push('--memory=3g', '--memory-swap=3g');
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -249,6 +299,11 @@ async function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  }
+
+  // Pass through credential env vars
+  for (const [key, value] of Object.entries(extraEnv)) {
+    args.push('-e', `${key}=${value}`);
   }
 
   for (const mount of mounts) {
@@ -282,10 +337,25 @@ export async function runContainerAgent(
   const agentIdentifier = input.isMain
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
+
+  // Build credential env vars for pass-through
+  const extraEnv: Record<string, string> = {};
+  if (process.env.ANTHROPIC_API_KEY) extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (process.env.LINEAR_API_KEY) extraEnv.LINEAR_API_KEY = process.env.LINEAR_API_KEY;
+  if (process.env.GITHUB_APP_PRIVATE_KEY) {
+    try {
+      extraEnv.GITHUB_TOKEN = await getGitHubInstallationToken(process.env.GITHUB_APP_PRIVATE_KEY);
+      logger.info({ containerName }, 'GitHub installation token generated');
+    } catch (err) {
+      logger.warn({ containerName, err }, 'Failed to generate GitHub installation token');
+    }
+  }
+
   const containerArgs = await buildContainerArgs(
     mounts,
     containerName,
     agentIdentifier,
+    extraEnv,
   );
 
   logger.debug(
@@ -313,6 +383,20 @@ export async function runContainerAgent(
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+
+  // Track this container so interrupted tasks can be detected on restart
+  const channelId = input.chatJid.replace(/^[^:]+:/, '');
+  let inFlightId: number | undefined;
+  try {
+    inFlightId = insertInFlightTask({
+      group_folder: input.groupFolder,
+      channel_id: channelId,
+      thread_ts: null,
+      original_message: input.prompt.slice(0, 1000),
+    });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to insert in_flight_task');
+  }
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
@@ -469,6 +553,7 @@ export async function runContainerAgent(
             'Container timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
+            if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
             resolve({
               status: 'success',
               result: null,
@@ -587,6 +672,7 @@ export async function runContainerAgent(
             { group: group.name, duration, newSessionId },
             'Container completed (streaming mode)',
           );
+          if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
           resolve({
             status: 'success',
             result: null,
@@ -625,6 +711,7 @@ export async function runContainerAgent(
           'Container completed',
         );
 
+        if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
         resolve(output);
       } catch (err) {
         logger.error(

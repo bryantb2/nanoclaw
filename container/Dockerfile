@@ -24,6 +24,10 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
@@ -49,7 +53,7 @@ COPY agent-runner/ ./
 RUN npm run build
 
 # Create workspace directories
-RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input /workspace/output
 
 # Create entrypoint script
 # Container input (prompt, group info) is passed via stdin JSON.
@@ -60,8 +64,16 @@ RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
 
+# Set global git identity for agent commits
+RUN git config --global user.name "Agent Fleet" \
+    && git config --global user.email "fleet@your-domain.com"
+
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
+
+# Set git identity for the node user as well
+RUN git config --global user.name "Agent Fleet" \
+    && git config --global user.email "fleet@your-domain.com"
 
 # Set working directory to group workspace
 WORKDIR /workspace/group

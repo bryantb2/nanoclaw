@@ -69,6 +69,13 @@ function createSchema(database: Database.Database): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS in_flight_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      thread_ts TEXT,
+      original_message TEXT
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
@@ -102,6 +109,15 @@ function createSchema(database: Database.Database): void {
     database
       .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
       .run(`${ASSISTANT_NAME}:%`);
+  } catch {
+    /* column already exists */
+  }
+
+  // Add max_budget_usd column to scheduled_tasks if it doesn't exist
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN max_budget_usd REAL`,
+    );
   } catch {
     /* column already exists */
   }
@@ -368,8 +384,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, max_budget_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -382,6 +398,7 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.max_budget_usd ?? null,
   );
 }
 
@@ -694,4 +711,41 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+export interface InFlightTask {
+  id: number;
+  group_folder: string;
+  channel_id: string;
+  thread_ts: string | null;
+  original_message: string | null;
+}
+
+export function insertInFlightTask(params: Omit<InFlightTask, 'id'>): number {
+  const result = db
+    .prepare(
+      `INSERT INTO in_flight_tasks (group_folder, channel_id, thread_ts, original_message)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(
+      params.group_folder,
+      params.channel_id,
+      params.thread_ts ?? null,
+      params.original_message ?? null,
+    );
+  return result.lastInsertRowid as number;
+}
+
+export function deleteInFlightTask(id: number): void {
+  db.prepare('DELETE FROM in_flight_tasks WHERE id = ?').run(id);
+}
+
+export function getAndClearInFlightTasks(): InFlightTask[] {
+  const rows = db
+    .prepare('SELECT * FROM in_flight_tasks')
+    .all() as InFlightTask[];
+  if (rows.length > 0) {
+    db.prepare('DELETE FROM in_flight_tasks').run();
+  }
+  return rows;
 }

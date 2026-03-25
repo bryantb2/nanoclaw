@@ -12,6 +12,13 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  uploadFile: (params: {
+    channelId: string;
+    filePath: string;
+    threadTs?: string;
+    title?: string;
+    comment?: string;
+  }) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -90,6 +97,32 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (data.action === 'uploadFile' && data.channelId && data.filePath) {
+                // Translate container path /workspace/output/... to host path
+                const containerOutputPrefix = '/workspace/output/';
+                let hostFilePath: string = data.filePath;
+                if (data.filePath.startsWith(containerOutputPrefix)) {
+                  const relativePath = data.filePath.slice(containerOutputPrefix.length);
+                  hostFilePath = path.join(DATA_DIR, sourceGroup, 'output', relativePath);
+                }
+                if (!fs.existsSync(hostFilePath)) {
+                  logger.warn(
+                    { hostFilePath, sourceGroup },
+                    'uploadFile: file not found on host',
+                  );
+                } else {
+                  await deps.uploadFile({
+                    channelId: data.channelId,
+                    filePath: hostFilePath,
+                    threadTs: data.threadTs,
+                    title: data.title,
+                    comment: data.comment,
+                  });
+                  logger.info(
+                    { channelId: data.channelId, hostFilePath, sourceGroup },
+                    'IPC uploadFile completed',
                   );
                 }
               }

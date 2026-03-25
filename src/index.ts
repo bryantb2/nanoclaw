@@ -31,6 +31,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getAndClearInFlightTasks,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -620,6 +621,27 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Notify about any tasks that were interrupted by a restart
+  const interrupted = getAndClearInFlightTasks();
+  for (const task of interrupted) {
+    const jid = Object.keys(registeredGroups).find(
+      (j) => registeredGroups[j].folder === task.group_folder,
+    );
+    const channel = jid ? findChannel(channels, jid) : null;
+    if (channel) {
+      const channelJid = `${channel.name}:${task.channel_id}`;
+      channel
+        .sendMessage(
+          channelJid,
+          `I was restarted while working on this. My progress is saved in the worktree — check git log on the feature branch to see what was committed. Reply @${ASSISTANT_NAME} continue to resume, or re-send your original request.`,
+        )
+        .catch((err) =>
+          logger.warn({ task, err }, 'Failed to send interrupted task notification'),
+        );
+    }
+    logger.info({ task }, 'Notified interrupted task');
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
@@ -642,6 +664,11 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
+    },
+    uploadFile: async (params) => {
+      const channel = channels.find((ch) => ch.uploadFile);
+      if (!channel?.uploadFile) throw new Error('No channel supports file upload');
+      return channel.uploadFile(params);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
@@ -672,6 +699,18 @@ async function main(): Promise<void> {
     },
   });
   queue.setProcessMessagesFn(processGroupMessages);
+  queue.setOnMessageQueued((groupJid) => {
+    const channel = findChannel(channels, groupJid);
+    if (!channel) return;
+    channel
+      .sendMessage(
+        groupJid,
+        "Queued — I'm working on something else in this channel. You're next.",
+      )
+      .catch((err) =>
+        logger.warn({ groupJid, err }, 'Failed to send queue acknowledgment'),
+      );
+  });
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
