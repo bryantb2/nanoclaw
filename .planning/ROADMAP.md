@@ -8,7 +8,7 @@ NanoClaw is a lightweight, single-process AI agent system running Claude in isol
 
 - [x] **Phase 01: Setup** - Initial installation, Slack registration, service configuration
 - [x] **Phase 02: Core Agent** - KICKOFF execution, T1-T13 validation, end-to-end pipeline confirmed
-- [ ] **Phase 03: Advanced Features** - File uploads, cost tracking, additional integrations
+- [x] **Phase 03: Operational Hardening** - T19 uploadFile IPC validated, T20 interrupt notification confirmed, deploy cron active
 
 ## Phase Details
 
@@ -36,16 +36,17 @@ Plans:
 - [x] 02-01: KICKOFF execution (all 11 steps + post-KICKOFF fixes)
 - [x] 02-02: T1-T13 validation (11 full pass, 2 partial)
 
-### Phase 03: Advanced Features
-**Goal**: File upload IPC validated in production, cost tracking added, Phase 3 capabilities
+### Phase 03: Operational Hardening
+**Goal**: Validate deferred Phase 02 items in production, confirm automated deploy pipeline
 **Depends on**: Phase 02
 **Success Criteria**:
-  1. T19: uploadFile IPC triggers correctly with real file-producing task
-  2. Cost tracking reports available via Slack
-  3. TBD additional capabilities
+  1. T19: uploadFile IPC triggers correctly with real file-producing task — PASS
+  2. T20: Interrupt notification posted on NanoClaw restart — PASS
+  3. deploy.sh cron confirmed at 5 AM daily — PASS
 
 Plans:
-- [ ] 03-01: TBD
+- [x] 03-01: Deploy cron setup (post-hoc — executed on production server)
+- [x] 03-02: T19 + T20 validation (uploadFile IPC, interrupt notification)
 
 ## Progress
 
@@ -53,4 +54,4 @@ Plans:
 |-------|----------------|--------|-----------|
 | 01. Setup | 1/1 | Complete | 2026-03-25 |
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
-| 03. Advanced Features | 0/TBD | Not started | - |
+| 03. Operational Hardening | 2/2 | Complete | 2026-03-25 |
