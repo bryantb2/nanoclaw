@@ -653,8 +653,12 @@ async function main(): Promise<void> {
                 .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
                 .replace(/<@[A-Z0-9]+>/g, '')
                 .replace(/@\S+\s*/g, '')
-                .replace(/&lt;|&gt;|&quot;|&amp;/g, (m: string) =>
-                  ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' }[m] || m),
+                .replace(
+                  /&lt;|&gt;|&quot;|&amp;/g,
+                  (m: string) =>
+                    ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' })[
+                      m
+                    ] || m,
                 )
                 .replace(/^[<>\s]+|[<>\s]+$/g, '')
                 .trim();
