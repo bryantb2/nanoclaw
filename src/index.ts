@@ -31,6 +31,8 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  appendCostLog,
+  getCostSummary,
   getAndClearInFlightTasks,
   getMessagesSince,
   getNewMessages,
@@ -208,11 +210,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Find the last trigger message to use as thread_ts for threading replies
   const allowlistCfgForThread = loadSenderAllowlist();
-  const triggerMessage = [...missedMessages].reverse().find(
-    (m) =>
-      TRIGGER_PATTERN.test(m.content.trim()) &&
-      (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfgForThread)),
-  );
+  const triggerMessage = [...missedMessages]
+    .reverse()
+    .find(
+      (m) =>
+        TRIGGER_PATTERN.test(m.content.trim()) &&
+        (m.is_from_me ||
+          isTriggerAllowed(chatJid, m.sender, allowlistCfgForThread)),
+    );
   const threadTs = triggerMessage?.id;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -245,32 +250,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text, threadTs ? { threadTs } : undefined);
-        outputSentToUser = true;
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+        if (text) {
+          await channel.sendMessage(
+            chatJid,
+            text,
+            threadTs ? { threadTs } : undefined,
+          );
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  }, threadTs);
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+    threadTs,
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -372,6 +387,35 @@ async function runAgent(
         'Container agent error',
       );
       return 'error';
+    }
+
+    // Track cost if reported
+    if (output.totalCostUsd && output.totalCostUsd > 0) {
+      try {
+        appendCostLog(group.folder, chatJid, output.totalCostUsd);
+        const summary = getCostSummary(group.folder);
+        const groupDir = resolveGroupFolderPath(group.folder);
+        const costSummaryPath = path.join(groupDir, 'cost-summary.json');
+        fs.writeFileSync(
+          costSummaryPath,
+          JSON.stringify(
+            {
+              today_usd: summary.todayUsd,
+              week_usd: summary.weekUsd,
+              all_time_usd: summary.allTimeUsd,
+              last_updated: new Date().toISOString(),
+            },
+            null,
+            2,
+          ),
+        );
+        logger.debug(
+          { group: group.name, costUsd: output.totalCostUsd },
+          'Cost logged and summary written',
+        );
+      } catch (err) {
+        logger.warn({ group: group.name, err }, 'Failed to write cost summary');
+      }
     }
 
     return 'success';
@@ -602,8 +646,9 @@ async function main(): Promise<void> {
       // Fire-and-forget emoji reaction on inbound non-bot messages before storing
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const ch = findChannel(channels, chatJid);
-        ch?.reactToMessage?.(chatJid, msg.id, 'eyes')
-          ?.catch(err => logger.debug({ err }, 'Failed to add eyes reaction'));
+        ch?.reactToMessage?.(chatJid, msg.id, 'eyes')?.catch((err) =>
+          logger.debug({ err }, 'Failed to add eyes reaction'),
+        );
       }
       storeMessage(msg);
     },
