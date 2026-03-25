@@ -641,27 +641,70 @@ async function main(): Promise<void> {
         const taskList = tasks
           .map((t) => {
             const msg = t.original_message || '';
-            // Extract ALL messages from XML (may contain multiple in a session)
-            const allMatches = [...msg.matchAll(/<message\s+sender="([^"]*)"\s+time="([^"]*)"[^>]*>([\s\S]*?)<\/message>/g)];
-            // Find the last substantive user message (skip short ones like 'continue')
-            let bestMatch = null;
+            // Extract ALL messages from XML
+            const allMatches = [
+              ...msg.matchAll(
+                /<message\s+sender="([^"]*)"\s+time="([^"]*)"[^>]*>([\s\S]*?)<\/message>/g,
+              ),
+            ];
+            // Clean a raw message: strip mentions, angle brackets, whitespace
+            const cleanMsg = (s: string) =>
+              s
+                .replace(/<@[A-Z0-9]+>/g, '')
+                .replace(/@\S+\s*/g, '')
+                .replace(/^[<>\s]+|[<>\s]+$/g, '')
+                .trim();
+            // Find the last substantive message (>15 chars, skip 'continue' etc)
+            let bestMatch: {
+              sender: string;
+              time: string;
+              content: string;
+            } | null = null;
             for (let i = allMatches.length - 1; i >= 0; i--) {
-              const raw = allMatches[i][3].replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+\s*/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
-              if (raw.length > 15) { bestMatch = { sender: allMatches[i][1], time: allMatches[i][2], content: raw }; break; }
+              const cleaned = cleanMsg(allMatches[i][3]);
+              if (cleaned.length > 15) {
+                bestMatch = {
+                  sender: allMatches[i][1],
+                  time: allMatches[i][2],
+                  content: cleaned,
+                };
+                break;
+              }
             }
+            // If no substantive message found, use first message but label appropriately
             if (!bestMatch && allMatches.length > 0) {
-              const m = allMatches[0];
-              const raw = m[3].replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+\s*/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
-              bestMatch = { sender: m[1], time: m[2], content: raw || 'Task in progress' };
+              const m = allMatches[allMatches.length - 1];
+              const cleaned = cleanMsg(m[3]);
+              bestMatch = {
+                sender: m[1],
+                time: m[2],
+                content: cleaned || 'Resumed task',
+              };
             }
             if (bestMatch) {
               let content = bestMatch.content;
-              if (content.length > 100) content = content.slice(0, 97) + '...';
-              return '\u2022 *' + bestMatch.sender + '* at ' + bestMatch.time + ': ' + content;
+              if (content.length > 100)
+                content = content.slice(0, 97) + '...';
+              return (
+                '\u2022 *' +
+                bestMatch.sender +
+                '* at ' +
+                bestMatch.time +
+                ': ' +
+                content
+              );
             }
             // Fallback: strip all tags and formatting artifacts
-            const clean = msg.replace(/<[^>]+>/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
-            return '\u2022 ' + (clean.length > 100 ? clean.slice(0, 97) + '...' : clean || 'Unknown task');
+            const clean = msg
+              .replace(/<[^>]+>/g, '')
+              .replace(/^[<>\s]+|[<>\s]+$/g, '')
+              .trim();
+            return (
+              '\u2022 ' +
+              (clean.length > 100
+                ? clean.slice(0, 97) + '...'
+                : clean || 'Unknown task')
+            );
           })
           .join('\n');
         const count = tasks.length === 1 ? 'a task' : tasks.length + ' tasks';
