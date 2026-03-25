@@ -55,3 +55,13 @@ Plans:
 | 01. Setup | 1/1 | Complete | 2026-03-25 |
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
+
+### Phase 03.1: Polish and Hardening TODOs (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 3
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 03.1 to break down)
