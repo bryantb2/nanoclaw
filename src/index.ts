@@ -623,26 +623,48 @@ async function main(): Promise<void> {
 
   // Notify about any tasks that were interrupted by a restart
   const interrupted = getAndClearInFlightTasks();
-  for (const task of interrupted) {
-    const jid = Object.keys(registeredGroups).find(
-      (j) => registeredGroups[j].folder === task.group_folder,
-    );
-    const channel = jid ? findChannel(channels, jid) : null;
-    if (channel) {
-      const channelJid = `${channel.name}:${task.channel_id}`;
-      channel
-        .sendMessage(
-          channelJid,
-          `I was restarted while working on this. My progress is saved in the worktree — check git log on the feature branch to see what was committed. Reply @${ASSISTANT_NAME} continue to resume, or re-send your original request.`,
-        )
-        .catch((err) =>
-          logger.warn(
-            { task, err },
-            'Failed to send interrupted task notification',
-          ),
-        );
+  if (interrupted.length > 0) {
+    const byChannel = new Map<string, typeof interrupted>();
+    for (const task of interrupted) {
+      const key = task.group_folder + ':' + task.channel_id;
+      if (!byChannel.has(key)) byChannel.set(key, []);
+      byChannel.get(key)!.push(task);
     }
-    logger.info({ task }, 'Notified interrupted task');
+    for (const [, tasks] of byChannel) {
+      const { group_folder, channel_id } = tasks[0];
+      const jid = Object.keys(registeredGroups).find(
+        (j) => registeredGroups[j].folder === group_folder,
+      );
+      const ch = jid ? findChannel(channels, jid) : null;
+      if (ch) {
+        const channelJid = ch.name + ':' + channel_id;
+        const taskList = tasks
+          .map((t) => {
+            const msg = t.original_message || '';
+            // Extract sender, time, and content from XML message tags
+            const msgMatch = msg.match(/<message\s+sender="([^"]*)"\s+time="([^"]*)"[^>]*>([\s\S]*?)<\/message>/);
+            if (msgMatch) {
+              const sender = msgMatch[1];
+              const time = msgMatch[2];
+              let content = msgMatch[3].trim().replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+/g, '').trim();
+              if (content.length > 100) content = content.slice(0, 97) + '...';
+              return '\u2022 *' + sender + '* at ' + time + ': ' + content;
+            }
+            // Fallback: strip XML tags, show clean text
+            const clean = msg.replace(/<[^>]+>/g, '').trim();
+            return '\u2022 ' + (clean.length > 100 ? clean.slice(0, 97) + '...' : clean || 'Unknown task');
+          })
+          .join('\n');
+        const count = tasks.length === 1 ? 'a task' : tasks.length + ' tasks';
+        ch.sendMessage(
+          channelJid,
+          'I was restarted while working on ' + count + '.\n\n' + taskList + '\n\nProgress is saved \u2014 check git log on any feature branches. Reply @' + ASSISTANT_NAME + ' continue to resume, or re-send your request.',
+        ).catch((err) =>
+          logger.warn({ tasks, err }, 'Failed to send interrupted task notification'),
+        );
+      }
+      logger.info({ group_folder, taskCount: tasks.length }, 'Notified interrupted tasks');
+    }
   }
 
   // Start subsystems (independently of connection handler)
