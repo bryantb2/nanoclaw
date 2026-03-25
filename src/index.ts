@@ -650,9 +650,13 @@ async function main(): Promise<void> {
             // Clean a raw message: strip mentions, angle brackets, whitespace
             const cleanMsg = (s: string) =>
               s
+                .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
                 .replace(/<@[A-Z0-9]+>/g, '')
                 .replace(/@\S+\s*/g, '')
-                .replace(/^[<>\s]+|[<>\s]+$/g, '').replace(/^<|>$/g, '')
+                .replace(/&lt;|&gt;|&quot;|&amp;/g, (m: string) =>
+                  ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' }[m] || m),
+                )
+                .replace(/^[<>\s]+|[<>\s]+$/g, '')
                 .trim();
             // Find the last substantive message (>15 chars, skip 'continue' etc)
             let bestMatch: {
