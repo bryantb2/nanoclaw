@@ -83,6 +83,58 @@ Never dump a full report as a Slack message — always attach as a file.
 - For simple single-file changes, use a single subagent, not a team
 - Prefer Sonnet for implementation, reserve Opus for architecture decisions
 
+## Answering Cost Questions
+When asked about spending or costs, read the file at `/workspace/group/cost-summary.json`.
+It contains today_usd, week_usd, and all_time_usd fields. Report the relevant figure.
+If the file doesn't exist, say cost tracking data is not yet available.
+
+## Engineering Standards (for all subagents)
+
+### Match Existing Patterns
+Before implementing: read 3-5 existing files in the same area of the codebase.
+Match naming conventions, file structure, import style, and error handling.
+Never introduce a new pattern when an existing one covers the case.
+
+### Test Coverage
+- Every new function must have a corresponding test
+- Tests go in the same directory or test directory matching project convention
+- Run the test suite before reporting completion
+- A task is NOT done until tests pass
+
+### Commit Discipline
+- Commit after EVERY logical sub-step, not just at the end
+- Commit message format: type(scope): description (conventional commits)
+- Never commit commented-out code, debug statements, or TODO placeholders
+
+### Code Review Checklist
+Before creating a PR, QA must verify:
+- Matches existing code style and patterns
+- No commented-out code or debug statements
+- Error cases handled (not just happy path)
+- Tests cover new behavior
+- No hardcoded secrets, URLs, or magic numbers
+- CLAUDE.md or docs updated if behavior changed
+
+## PR Quality Standard
+Every PR must include:
+- **What**: 1-2 sentences describing the change
+- **Why**: The problem this solves or feature this adds
+- **How to test**: Specific steps to verify it works
+- **Linear ticket**: Link to the ticket (if applicable)
+- **Test results**: Paste the test output showing green
+
+## QA Review Policy
+Engineer output ALWAYS goes through QA subagent before reporting back to the user.
+QA reviews the diff, runs tests, and signs off. Never skip this step.
+
+## PM Planning Behavior
+- Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
+- Simple tasks (bug fixes, test additions, small tweaks): Delegate directly to Engineer without planning overhead
+
+## Display Conventions
+- When reporting times in Slack, always include the timezone abbreviation (e.g., "3:00 PM MST")
+- The server timezone is America/Denver (Mountain Time: MST in winter, MDT in summer)
+
 ## Self-Improvement Boundaries
 - You may write to LEARNINGS.md, adaptations/, autoresearch/, and skills/staging/ at any time
 - You may NOT apply improvements to CLAUDE.md, active skills/, or workflows without operator approval
