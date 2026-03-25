@@ -652,7 +652,7 @@ async function main(): Promise<void> {
               s
                 .replace(/<@[A-Z0-9]+>/g, '')
                 .replace(/@\S+\s*/g, '')
-                .replace(/^[<>\s]+|[<>\s]+$/g, '')
+                .replace(/^[<>\s]+|[<>\s]+$/g, '').replace(/^<|>$/g, '')
                 .trim();
             // Find the last substantive message (>15 chars, skip 'continue' etc)
             let bestMatch: {
@@ -683,15 +683,15 @@ async function main(): Promise<void> {
             }
             if (bestMatch) {
               let content = bestMatch.content;
-              if (content.length > 100)
-                content = content.slice(0, 97) + '...';
+              if (content.length > 100) content = content.slice(0, 97) + '...';
               return (
                 '\u2022 *' +
                 bestMatch.sender +
                 '* at ' +
                 bestMatch.time +
-                ': ' +
-                content
+                ': `' +
+                content +
+                '`'
               );
             }
             // Fallback: strip all tags and formatting artifacts
@@ -702,8 +702,8 @@ async function main(): Promise<void> {
             return (
               '\u2022 ' +
               (clean.length > 100
-                ? clean.slice(0, 97) + '...'
-                : clean || 'Unknown task')
+                ? '`' + clean.slice(0, 97) + '...`'
+                : '`' + (clean || 'Unknown task') + '`')
             );
           })
           .join('\n');
