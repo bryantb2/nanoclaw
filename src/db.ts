@@ -89,6 +89,14 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS cost_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      run_at TEXT NOT NULL DEFAULT (datetime('now')),
+      cost_usd REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cost_log_run_at ON cost_log(run_at);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -709,6 +717,40 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+
+// --- Cost tracking ---
+
+export function appendCostLog(groupFolder: string, chatJid: string, costUsd: number): void {
+  db.prepare(
+    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd) VALUES (?, ?, datetime('now'), ?)`,
+  ).run(groupFolder, chatJid, costUsd);
+}
+
+export function getCostSummary(groupFolder: string): {
+  todayUsd: number;
+  weekUsd: number;
+  allTimeUsd: number;
+} {
+  const todayRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_log WHERE group_folder = ? AND run_at >= date('now')`,
+    )
+    .get(groupFolder) as { total: number };
+  const weekRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_log WHERE group_folder = ? AND run_at >= date('now', '-7 days')`,
+    )
+    .get(groupFolder) as { total: number };
+  const allTimeRow = db
+    .prepare(`SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_log WHERE group_folder = ?`)
+    .get(groupFolder) as { total: number };
+  return {
+    todayUsd: todayRow.total,
+    weekUsd: weekRow.total,
+    allTimeUsd: allTimeRow.total,
+  };
 }
 
 export interface InFlightTask {

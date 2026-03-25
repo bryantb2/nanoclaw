@@ -85,6 +85,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   maxBudgetUsd?: number;
+  threadTs?: string;
 }
 
 export interface ContainerOutput {
@@ -92,6 +93,7 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
 }
 
 interface VolumeMount {
@@ -404,7 +406,7 @@ export async function runContainerAgent(
     inFlightId = insertInFlightTask({
       group_folder: input.groupFolder,
       channel_id: channelId,
-      thread_ts: null,
+      thread_ts: input.threadTs ?? null,
       original_message: input.prompt.slice(0, 1000),
     });
   } catch (err) {
