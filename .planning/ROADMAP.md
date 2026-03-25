@@ -55,13 +55,16 @@ Plans:
 | 01. Setup | 1/1 | Complete | 2026-03-25 |
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
+| 03.1. Polish + Hardening TODOs | 2/3+ | In Progress (checkpoint) | — |
 
 ### Phase 03.1: Polish and Hardening TODOs (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
+**Goal:** Ship deferred polish items: Slack threading, cost tracking, Linear OAuth bot persona
 **Requirements**: TBD
 **Depends on:** Phase 3
-**Plans:** 0 plans
+**Plans:** 3+ plans (03.1-01 through 03.1-03 active)
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 03.1 to break down)
+- [x] 03.1-01: Slack threading + emoji reaction + cost tracking (feat commits only, no plan file)
+- [x] 03.1-02: Engineering standards + QA policy + display conventions added to CLAUDE.md
+- [ ] 03.1-03: Linear OAuth app + bot persona (tasks 1-2 done, checkpoint at task 3 — OAuth token)
