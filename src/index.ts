@@ -623,39 +623,26 @@ async function main(): Promise<void> {
 
   // Notify about any tasks that were interrupted by a restart
   const interrupted = getAndClearInFlightTasks();
-  if (interrupted.length > 0) {
-    const byChannel = new Map<string, typeof interrupted>();
-    for (const task of interrupted) {
-      const key = task.group_folder + ':' + task.channel_id;
-      if (!byChannel.has(key)) byChannel.set(key, []);
-      byChannel.get(key)!.push(task);
-    }
-    for (const [, tasks] of byChannel) {
-      const { group_folder, channel_id } = tasks[0];
-      const jid = Object.keys(registeredGroups).find(
-        (j) => registeredGroups[j].folder === group_folder,
-      );
-      const ch = jid ? findChannel(channels, jid) : null;
-      if (ch) {
-        const channelJid = ch.name + ':' + channel_id;
-        const taskList = tasks
-          .map((t) => {
-            const msg = t.original_message || 'Unknown task';
-            const match = msg.match(/<message[^>]*>([\s\S]*?)<\/message>/);
-            const summary = match ? match[1].trim() : msg;
-            return '• ' + (summary.length > 120 ? summary.slice(0, 117) + '...' : summary);
-          })
-          .join('\n');
-        const count = tasks.length === 1 ? 'a task' : tasks.length + ' tasks';
-        ch.sendMessage(
+  for (const task of interrupted) {
+    const jid = Object.keys(registeredGroups).find(
+      (j) => registeredGroups[j].folder === task.group_folder,
+    );
+    const channel = jid ? findChannel(channels, jid) : null;
+    if (channel) {
+      const channelJid = `${channel.name}:${task.channel_id}`;
+      channel
+        .sendMessage(
           channelJid,
-          'I was restarted while working on ' + count + '. Here is what was interrupted:\n\n' + taskList + '\n\nProgress is saved — check git log on any feature branches. Reply @' + ASSISTANT_NAME + ' continue to resume, or re-send your request.',
-        ).catch((err) =>
-          logger.warn({ tasks, err }, 'Failed to send interrupted task notification'),
+          `I was restarted while working on this. My progress is saved in the worktree — check git log on the feature branch to see what was committed. Reply @${ASSISTANT_NAME} continue to resume, or re-send your original request.`,
+        )
+        .catch((err) =>
+          logger.warn(
+            { task, err },
+            'Failed to send interrupted task notification',
+          ),
         );
-      }
-      logger.info({ group_folder, taskCount: tasks.length }, 'Notified interrupted tasks');
     }
+    logger.info({ task }, 'Notified interrupted task');
   }
 
   // Start subsystems (independently of connection handler)
