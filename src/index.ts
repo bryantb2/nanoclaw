@@ -641,29 +641,50 @@ async function main(): Promise<void> {
         const taskList = tasks
           .map((t) => {
             const msg = t.original_message || '';
-            // Extract sender, time, and content from XML message tags
-            const msgMatch = msg.match(/<message\s+sender="([^"]*)"\s+time="([^"]*)"[^>]*>([\s\S]*?)<\/message>/);
-            if (msgMatch) {
-              const sender = msgMatch[1];
-              const time = msgMatch[2];
-              let content = msgMatch[3].trim().replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+/g, '').trim();
-              if (content.length > 100) content = content.slice(0, 97) + '...';
-              return '\u2022 *' + sender + '* at ' + time + ': ' + content;
+            // Extract ALL messages from XML (may contain multiple in a session)
+            const allMatches = [...msg.matchAll(/<message\s+sender="([^"]*)"\s+time="([^"]*)"[^>]*>([\s\S]*?)<\/message>/g)];
+            // Find the last substantive user message (skip short ones like 'continue')
+            let bestMatch = null;
+            for (let i = allMatches.length - 1; i >= 0; i--) {
+              const raw = allMatches[i][3].replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+\s*/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
+              if (raw.length > 15) { bestMatch = { sender: allMatches[i][1], time: allMatches[i][2], content: raw }; break; }
             }
-            // Fallback: strip XML tags, show clean text
-            const clean = msg.replace(/<[^>]+>/g, '').trim();
+            if (!bestMatch && allMatches.length > 0) {
+              const m = allMatches[0];
+              const raw = m[3].replace(/<@[A-Z0-9]+>/g, '').replace(/@\S+\s*/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
+              bestMatch = { sender: m[1], time: m[2], content: raw || 'Task in progress' };
+            }
+            if (bestMatch) {
+              let content = bestMatch.content;
+              if (content.length > 100) content = content.slice(0, 97) + '...';
+              return '\u2022 *' + bestMatch.sender + '* at ' + bestMatch.time + ': ' + content;
+            }
+            // Fallback: strip all tags and formatting artifacts
+            const clean = msg.replace(/<[^>]+>/g, '').replace(/^[<>\s]+|[<>\s]+$/g, '').trim();
             return '\u2022 ' + (clean.length > 100 ? clean.slice(0, 97) + '...' : clean || 'Unknown task');
           })
           .join('\n');
         const count = tasks.length === 1 ? 'a task' : tasks.length + ' tasks';
         ch.sendMessage(
           channelJid,
-          'I was restarted while working on ' + count + '.\n\n' + taskList + '\n\nProgress is saved \u2014 check git log on any feature branches. Reply @' + ASSISTANT_NAME + ' continue to resume, or re-send your request.',
+          'I was restarted while working on ' +
+            count +
+            '.\n\n' +
+            taskList +
+            '\n\nProgress is saved \u2014 check git log on any feature branches. Reply @' +
+            ASSISTANT_NAME +
+            ' continue to resume, or re-send your request.',
         ).catch((err) =>
-          logger.warn({ tasks, err }, 'Failed to send interrupted task notification'),
+          logger.warn(
+            { tasks, err },
+            'Failed to send interrupted task notification',
+          ),
         );
       }
-      logger.info({ group_folder, taskCount: tasks.length }, 'Notified interrupted tasks');
+      logger.info(
+        { group_folder, taskCount: tasks.length },
+        'Notified interrupted tasks',
+      );
     }
   }
 
