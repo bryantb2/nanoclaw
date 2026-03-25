@@ -14,6 +14,18 @@ import {
 } from '../types.js';
 
 // Slack's chat.postMessage API limits text to ~4000 characters per call.
+/**
+ * Convert GitHub-flavored markdown to Slack mrkdwn.
+ */
+function markdownToSlackMrkdwn(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .replace(/~~(.+?)~~/g, "~$1~")
+    .replace(/```\w*\n/g, "```\n")
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    .replace(/^(\s*)- /gm, "$1\u2022 ")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
+}
 // Messages exceeding this are split into sequential chunks.
 const MAX_MESSAGE_LENGTH = 4000;
 
@@ -172,12 +184,12 @@ export class SlackChannel implements Channel {
     try {
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text });
+        await this.app.client.chat.postMessage({ channel: channelId, text: markdownToSlackMrkdwn(text) });
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
             channel: channelId,
-            text: text.slice(i, i + MAX_MESSAGE_LENGTH),
+            text: markdownToSlackMrkdwn(text.slice(i, i + MAX_MESSAGE_LENGTH)),
           });
         }
       }
@@ -277,7 +289,7 @@ export class SlackChannel implements Channel {
         const channelId = item.jid.replace(/^slack:/, '');
         await this.app.client.chat.postMessage({
           channel: channelId,
-          text: item.text,
+          text: markdownToSlackMrkdwn(item.text),
         });
         logger.info(
           { jid: item.jid, length: item.text.length },
