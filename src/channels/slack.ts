@@ -19,12 +19,12 @@ import {
  */
 function markdownToSlackMrkdwn(text: string): string {
   return text
-    .replace(/\*\*(.+?)\*\*/g, "*$1*")
-    .replace(/~~(.+?)~~/g, "~$1~")
-    .replace(/```\w*\n/g, "```\n")
-    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
-    .replace(/^(\s*)- /gm, "$1\u2022 ")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')
+    .replace(/~~(.+?)~~/g, '~$1~')
+    .replace(/```\w*\n/g, '```\n')
+    .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
+    .replace(/^(\s*)- /gm, '$1\u2022 ')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
 }
 // Messages exceeding this are split into sequential chunks.
 const MAX_MESSAGE_LENGTH = 4000;
@@ -106,8 +106,7 @@ export class SlackChannel implements Channel {
       const groups = this.opts.registeredGroups();
       if (!groups[jid]) return;
 
-      const isBotMessage =
-        !!msg.bot_id || msg.user === this.botUserId;
+      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
       let senderName: string;
       if (isBotMessage) {
@@ -125,7 +124,10 @@ export class SlackChannel implements Channel {
       let content = msg.text;
       if (this.botUserId && !isBotMessage) {
         const mentionPattern = `<@${this.botUserId}>`;
-        if (content.includes(mentionPattern) && !TRIGGER_PATTERN.test(content)) {
+        if (
+          content.includes(mentionPattern) &&
+          !TRIGGER_PATTERN.test(content)
+        ) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
@@ -154,10 +156,7 @@ export class SlackChannel implements Channel {
       this.botUserId = auth.user_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
-      logger.warn(
-        { err },
-        'Connected to Slack but failed to get bot user ID',
-      );
+      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
 
     this.connected = true;
@@ -184,7 +183,10 @@ export class SlackChannel implements Channel {
     try {
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text: markdownToSlackMrkdwn(text) });
+        await this.app.client.chat.postMessage({
+          channel: channelId,
+          text: markdownToSlackMrkdwn(text),
+        });
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
@@ -257,9 +259,7 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private async resolveUserName(
-    userId: string,
-  ): Promise<string | undefined> {
+  private async resolveUserName(userId: string): Promise<string | undefined> {
     if (!userId) return undefined;
 
     const cached = this.userNameCache.get(userId);

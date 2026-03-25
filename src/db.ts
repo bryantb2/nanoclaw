@@ -115,9 +115,7 @@ function createSchema(database: Database.Database): void {
 
   // Add max_budget_usd column to scheduled_tasks if it doesn't exist
   try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN max_budget_usd REAL`,
-    );
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN max_budget_usd REAL`);
   } catch {
     /* column already exists */
   }

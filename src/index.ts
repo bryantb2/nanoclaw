@@ -636,7 +636,10 @@ async function main(): Promise<void> {
           `I was restarted while working on this. My progress is saved in the worktree — check git log on the feature branch to see what was committed. Reply @${ASSISTANT_NAME} continue to resume, or re-send your original request.`,
         )
         .catch((err) =>
-          logger.warn({ task, err }, 'Failed to send interrupted task notification'),
+          logger.warn(
+            { task, err },
+            'Failed to send interrupted task notification',
+          ),
         );
     }
     logger.info({ task }, 'Notified interrupted task');
@@ -667,7 +670,8 @@ async function main(): Promise<void> {
     },
     uploadFile: async (params) => {
       const channel = channels.find((ch) => ch.uploadFile);
-      if (!channel?.uploadFile) throw new Error('No channel supports file upload');
+      if (!channel?.uploadFile)
+        throw new Error('No channel supports file upload');
       return channel.uploadFile(params);
     },
     registeredGroups: () => registeredGroups,
