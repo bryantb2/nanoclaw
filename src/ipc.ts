@@ -99,13 +99,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
-              } else if (data.action === 'uploadFile' && data.channelId && data.filePath) {
+              } else if (
+                data.action === 'uploadFile' &&
+                data.channelId &&
+                data.filePath
+              ) {
                 // Translate container path /workspace/output/... to host path
                 const containerOutputPrefix = '/workspace/output/';
                 let hostFilePath: string = data.filePath;
                 if (data.filePath.startsWith(containerOutputPrefix)) {
-                  const relativePath = data.filePath.slice(containerOutputPrefix.length);
-                  hostFilePath = path.join(DATA_DIR, sourceGroup, 'output', relativePath);
+                  const relativePath = data.filePath.slice(
+                    containerOutputPrefix.length,
+                  );
+                  hostFilePath = path.join(
+                    DATA_DIR,
+                    sourceGroup,
+                    'output',
+                    relativePath,
+                  );
                 }
                 if (!fs.existsSync(hostFilePath)) {
                   logger.warn(

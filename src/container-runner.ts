@@ -37,8 +37,12 @@ const GITHUB_INSTALLATION_ID = '115016418';
 
 function createGitHubAppJwt(privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 600, iss: GITHUB_APP_ID })).toString('base64url');
+  const header = Buffer.from(
+    JSON.stringify({ alg: 'RS256', typ: 'JWT' }),
+  ).toString('base64url');
+  const payload = Buffer.from(
+    JSON.stringify({ iat: now - 60, exp: now + 600, iss: GITHUB_APP_ID }),
+  ).toString('base64url');
   const signingInput = `${header}.${payload}`;
   const sign = createSign('RSA-SHA256');
   sign.update(signingInput);
@@ -60,7 +64,9 @@ async function getGitHubInstallationToken(privateKey: string): Promise<string> {
     },
   );
   if (!resp.ok) {
-    throw new Error(`GitHub token request failed: ${resp.status} ${await resp.text()}`);
+    throw new Error(
+      `GitHub token request failed: ${resp.status} ${await resp.text()}`,
+    );
   }
   const data = (await resp.json()) as { token: string };
   return data.token;
@@ -340,14 +346,21 @@ export async function runContainerAgent(
 
   // Build credential env vars for pass-through
   const extraEnv: Record<string, string> = {};
-  if (process.env.ANTHROPIC_API_KEY) extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  if (process.env.LINEAR_API_KEY) extraEnv.LINEAR_API_KEY = process.env.LINEAR_API_KEY;
+  if (process.env.ANTHROPIC_API_KEY)
+    extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (process.env.LINEAR_API_KEY)
+    extraEnv.LINEAR_API_KEY = process.env.LINEAR_API_KEY;
   if (process.env.GITHUB_APP_PRIVATE_KEY) {
     try {
-      extraEnv.GITHUB_TOKEN = await getGitHubInstallationToken(process.env.GITHUB_APP_PRIVATE_KEY);
+      extraEnv.GITHUB_TOKEN = await getGitHubInstallationToken(
+        process.env.GITHUB_APP_PRIVATE_KEY,
+      );
       logger.info({ containerName }, 'GitHub installation token generated');
     } catch (err) {
-      logger.warn({ containerName, err }, 'Failed to generate GitHub installation token');
+      logger.warn(
+        { containerName, err },
+        'Failed to generate GitHub installation token',
+      );
     }
   }
 
@@ -553,7 +566,11 @@ export async function runContainerAgent(
             'Container timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
-            if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
+            if (inFlightId !== undefined) {
+              try {
+                deleteInFlightTask(inFlightId);
+              } catch {}
+            }
             resolve({
               status: 'success',
               result: null,
@@ -672,7 +689,11 @@ export async function runContainerAgent(
             { group: group.name, duration, newSessionId },
             'Container completed (streaming mode)',
           );
-          if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
+          if (inFlightId !== undefined) {
+            try {
+              deleteInFlightTask(inFlightId);
+            } catch {}
+          }
           resolve({
             status: 'success',
             result: null,
@@ -711,7 +732,11 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        if (inFlightId !== undefined) { try { deleteInFlightTask(inFlightId); } catch {} }
+        if (inFlightId !== undefined) {
+          try {
+            deleteInFlightTask(inFlightId);
+          } catch {}
+        }
         resolve(output);
       } catch (err) {
         logger.error(
