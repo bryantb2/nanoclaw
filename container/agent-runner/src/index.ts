@@ -28,6 +28,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   maxBudgetUsd?: number;
+  threadTs?: string;
 }
 
 interface ContainerOutput {
@@ -35,6 +36,7 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
 }
 
 interface SessionEntry {
@@ -466,7 +468,8 @@ async function runQuery(
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        totalCostUsd: 'total_cost_usd' in message ? (message as { total_cost_usd?: number }).total_cost_usd ?? 0 : 0,
       });
     }
   }

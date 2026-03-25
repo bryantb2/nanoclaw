@@ -168,7 +168,7 @@ export class SlackChannel implements Channel {
     await this.syncChannelMetadata();
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string, opts?: { threadTs?: string }): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -186,12 +186,14 @@ export class SlackChannel implements Channel {
         await this.app.client.chat.postMessage({
           channel: channelId,
           text: markdownToSlackMrkdwn(text),
+          ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
         });
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
             channel: channelId,
             text: markdownToSlackMrkdwn(text.slice(i, i + MAX_MESSAGE_LENGTH)),
+            ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
           });
         }
       }
@@ -203,6 +205,15 @@ export class SlackChannel implements Channel {
         'Failed to send Slack message, queued',
       );
     }
+  }
+
+  async reactToMessage(channelId: string, messageTs: string, emoji: string): Promise<void> {
+    const rawChannelId = channelId.replace(/^slack:/, '');
+    await this.app.client.reactions.add({
+      channel: rawChannelId,
+      name: emoji,
+      timestamp: messageTs,
+    });
   }
 
   isConnected(): boolean {
