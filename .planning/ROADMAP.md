@@ -9,7 +9,7 @@ NanoClaw is a lightweight, single-process AI agent system running Claude in isol
 - [x] **Phase 01: Setup** - Initial installation, Slack registration, service configuration
 - [x] **Phase 02: Core Agent** - KICKOFF execution, T1-T13 validation, end-to-end pipeline confirmed
 - [x] **Phase 03: Operational Hardening** - T19 uploadFile IPC validated, T20 interrupt notification confirmed, deploy cron active
-- [x] **Phase 04: Self-Improvement Loop** - fleet-ops-staging workspace, nightly-review skill sync, approval handling flow
+- [x] **Phase 04: Self-Improvement Loop** - nightly-review skill rewritten to meta-level process improvement, first live run confirmed, loop active in organic daily operation
 
 ## Phase Details
 
@@ -57,7 +57,7 @@ Plans:
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
 | 03.1. Polish + Hardening TODOs | 3/3 | Complete    | 2026-03-26 |
-| 04. Self-Improvement Loop | 1/1 | Complete    | 2026-03-26 |
+| 04. Self-Improvement Loop | 2/2 | Complete    | 2026-03-26 |
 
 ### Phase 03.1: Polish and Hardening TODOs (INSERTED)
 
@@ -75,7 +75,8 @@ Plans:
 
 **Goal:** Enable nightly-review agent to propose and apply self-improvements with human approval gate
 **Depends on:** Phase 03.1
-**Plans:** 1/1 plans complete
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 04-01: Server infra fixes — fleet-ops-staging workspace dir, cron to 3 AM, nightly-review SKILL.md synced to container/skills/, paths corrected in SKILL.md + CLAUDE.md, approval flow added
+- [x] 04-02: Validation + skill rewrite — nightly-review rewritten to meta-level process improvement, first live run confirmed (3 proposals generated), sustained monitoring deferred to organic daily operation
