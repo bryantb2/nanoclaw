@@ -6,7 +6,7 @@ description: End-of-day review of all groups' work. Identifies improvements and 
 # Nightly Review Skill
 
 ## When to Use
-- Triggered by the nightly scheduled task (default: 6 PM operator timezone)
+- Triggered by the nightly scheduled task (3 AM Mountain Time, weekdays)
 - Can also be triggered manually: "@Fleet run your nightly review"
 
 ## Budget
@@ -30,7 +30,7 @@ Plan your work within this budget:
 1. Read today's session transcripts across all groups
 2. Note: tasks that took unusually long, repeated patterns, failures, questions asked
 3. Note: things that went well — fast completions, clean test runs, good delegation
-4. Append observations to /workspace/LEARNINGS.md with today's date
+4. Append observations to /workspace/extra/fleet-ops-staging/LEARNINGS.md with today's date
 
 ### Phase 2: Analyze
 1. Compare today's patterns against LEARNINGS.md history
@@ -42,9 +42,9 @@ Plan your work within this budget:
 For each proposal:
 1. Write a clear description of the problem observed
 2. Write the proposed fix (skill draft, CLAUDE.md amendment, or workflow change)
-3. If it's a skill: write it to /workspace/skills/staging/{name}/SKILL.md
-4. If it's a CLAUDE.md patch: write it to /workspace/adaptations/claude-patch.md
-5. If it's a workflow change: write it to /workspace/adaptations/proposals.md
+3. If it's a skill: write it to /workspace/extra/fleet-ops-staging/skills/staging/{name}/SKILL.md
+4. If it's a CLAUDE.md patch: write it to /workspace/extra/fleet-ops-staging/adaptations/claude-patch.md
+5. If it's a workflow change: write it to /workspace/extra/fleet-ops-staging/adaptations/proposals.md
 
 ### Phase 3b: Autoresearch Loop (for skill proposals only)
 When a proposal is a new or modified skill, run the Karpathy autoresearch loop on it
@@ -69,7 +69,7 @@ The core pattern: Modify → Evaluate → Keep or Discard → Repeat.
    e. Score → compare to baseline
    f. If improved or equal: KEEP as new baseline, log the change
    g. If worse: DISCARD, revert SKILL.md to previous version
-5. Write results to /workspace/autoresearch/{skill-name}/results.jsonl
+5. Write results to /workspace/extra/fleet-ops-staging/autoresearch/{skill-name}/results.jsonl
 6. Include in the Slack report: starting pass rate, ending pass rate,
    changelog of mutations kept, and the final SKILL.md diff
 
@@ -88,10 +88,19 @@ Post to Slack #fleet-ops:
 - For skill proposals: autoresearch results — starting pass rate → ending pass rate,
   number of iterations run, changelog of kept mutations
 
+### Proposal Persistence
+Before posting your report, save ALL proposal details to /workspace/extra/fleet-ops-staging/adaptations/proposals.md in a structured format:
+- Number each proposal (Proposal #1, #2, #3)
+- Include the full diff or content for each
+- Include the type (skill, CLAUDE.md patch, workflow change)
+- Include the target file path
+
+This is CRITICAL: when the operator approves a proposal (e.g. "@Fleet approve proposal #1"), a NEW container spawns to handle it. That container reads proposals.md to know what to apply. If proposals.md is empty or missing, the approval cannot be fulfilled.
+
 ### Phase 5: Wait for Approval
 - Do NOT apply changes until the operator approves in Slack
 - On approval: create branch, promote changes, gh pr create, post PR link
-- On rejection: note the rejection reason in LEARNINGS.md to avoid re-proposing
+- On rejection: note the rejection reason in /workspace/extra/fleet-ops-staging/LEARNINGS.md to avoid re-proposing
 
 ## Hard Boundaries
 - NEVER modify NanoClaw source code (src/, container/, package.json)
