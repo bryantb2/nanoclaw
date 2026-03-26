@@ -637,7 +637,12 @@ async function main(): Promise<void> {
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid] && TRIGGER_PATTERN.test(msg.content.trim())) {
+      if (
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        registeredGroups[chatJid] &&
+        TRIGGER_PATTERN.test(msg.content.trim())
+      ) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
@@ -653,7 +658,12 @@ async function main(): Promise<void> {
         }
       }
       // Fire-and-forget emoji reaction on inbound non-bot messages before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid] && TRIGGER_PATTERN.test(msg.content.trim())) {
+      if (
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        registeredGroups[chatJid] &&
+        TRIGGER_PATTERN.test(msg.content.trim())
+      ) {
         const ch = findChannel(channels, chatJid);
         ch?.reactToMessage?.(chatJid, msg.id, 'eyes')?.catch((err) =>
           logger.debug({ err }, 'Failed to add eyes reaction'),
