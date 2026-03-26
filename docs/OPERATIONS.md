@@ -51,7 +51,85 @@ systemctl --user restart nanoclaw
 
 ---
 
-## 2. Recovery Procedures
+## 2. Credential Rotation
+
+### Rotate Anthropic API Key
+
+```bash
+cd ~/nanoclaw
+bash scripts/rotate-api-key.sh sk-ant-api03-YOUR-NEW-KEY-HERE
+```
+
+The script:
+1. **PATCHes** the existing OneCLI secret (preserves secret ID + proxy tokens)
+2. Updates `data/env/env` (fallback for direct injection)
+3. Restarts NanoClaw
+4. Verifies the service is running
+
+After running: update the key in [Infisical console](https://app.infisical.com) manually (read-only machine identity can't write).
+
+**CRITICAL: Never delete + recreate the OneCLI secret.** This invalidates the proxy access tokens (`aoc_...`) that NanoClaw uses to authenticate containers against OneCLI. PATCH updates the value while keeping the secret ID and all proxy tokens intact.
+
+### Rotate Linear API Key
+
+Linear uses direct injection (not OneCLI). Update in two places:
+
+```bash
+# 1. Update on server
+sed -i 's|^LINEAR_API_KEY=.*|LINEAR_API_KEY=lin_api_NEW_KEY|' ~/nanoclaw/data/env/env
+systemctl --user restart nanoclaw
+
+# 2. Update in Infisical console
+# https://app.infisical.com → agent-fleet → prod → LINEAR_API_KEY
+```
+
+### Rotate GitHub App Private Key
+
+```bash
+# 1. Download new .pem from GitHub App settings
+# 2. SCP to server
+scp -i ~/.ssh/id_ed25519_hetzner new-key.pem agentfleet@100.104.163.53:~/github-app-key.pem
+
+# 3. Fix permissions and restart
+ssh agentfleet@100.104.163.53 'chmod 600 ~/github-app-key.pem && systemctl --user restart nanoclaw'
+```
+
+### OneCLI Troubleshooting
+
+If containers show "Invalid API key" after rotation:
+
+```bash
+# Verify OneCLI is running
+docker ps --filter name=onecli
+
+# Check the secret exists and has the right preview
+curl -s http://localhost:10254/api/secrets | python3 -m json.tool
+
+# Test the proxy directly
+curl -s -x "http://127.0.0.1:10255" https://api.anthropic.com/v1/messages \
+  -H "x-api-key: placeholder" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-20250514","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+If OneCLI was accidentally deleted/reinstalled: the proxy tokens are invalid. Fix:
+```bash
+# Reinstall OneCLI (generates new proxy infrastructure)
+curl -fsSL onecli.sh/install | sh
+
+# Recreate the secret
+onecli secrets create --name Anthropic --type anthropic \
+  --host-pattern=api.anthropic.com \
+  --value="$(grep ANTHROPIC_API_KEY ~/nanoclaw/data/env/env | cut -d= -f2)"
+
+# Restart NanoClaw (gets fresh proxy tokens from new OneCLI)
+systemctl --user restart nanoclaw
+```
+
+---
+
+## 3. Recovery Procedures
 
 ### Rollback a Bad Deploy
 
@@ -124,7 +202,7 @@ docker builder prune -f
 
 ---
 
-## 3. Fork Reconciliation
+## 4. Fork Reconciliation
 
 ### Pull Upstream NanoClaw Updates
 
@@ -162,7 +240,7 @@ If tests fail after merge: check upstream changelog for breaking API changes in 
 
 ---
 
-## 4. Server Admin
+## 5. Server Admin
 
 ### SSH Access
 
