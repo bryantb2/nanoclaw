@@ -9,6 +9,7 @@ NanoClaw is a lightweight, single-process AI agent system running Claude in isol
 - [x] **Phase 01: Setup** - Initial installation, Slack registration, service configuration
 - [x] **Phase 02: Core Agent** - KICKOFF execution, T1-T13 validation, end-to-end pipeline confirmed
 - [x] **Phase 03: Operational Hardening** - T19 uploadFile IPC validated, T20 interrupt notification confirmed, deploy cron active
+- [x] **Phase 04: Self-Improvement Loop** - fleet-ops-staging workspace, nightly-review skill sync, approval handling flow
 
 ## Phase Details
 
@@ -56,6 +57,7 @@ Plans:
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
 | 03.1. Polish + Hardening TODOs | 3/3 | Complete    | 2026-03-26 |
+| 04. Self-Improvement Loop | 1/1 | Complete    | 2026-03-26 |
 
 ### Phase 03.1: Polish and Hardening TODOs (INSERTED)
 
@@ -68,3 +70,12 @@ Plans:
 - [x] 03.1-01: Slack threading + emoji reaction + cost tracking (feat commits only, no plan file)
 - [x] 03.1-02: Engineering standards + QA policy + display conventions added to CLAUDE.md
 - [x] 03.1-03: Linear bot identity (fleet@krewtrack.com workspace member) + bot persona instructions in CLAUDE.md
+
+### Phase 04: Self-Improvement Loop
+
+**Goal:** Enable nightly-review agent to propose and apply self-improvements with human approval gate
+**Depends on:** Phase 03.1
+**Plans:** 1/1 plans complete
+
+Plans:
+- [x] 04-01: Server infra fixes — fleet-ops-staging workspace dir, cron to 3 AM, nightly-review SKILL.md synced to container/skills/, paths corrected in SKILL.md + CLAUDE.md, approval flow added

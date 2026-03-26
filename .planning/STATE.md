@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: "Completed 03.1-03-PLAN.md — all plans done"
-last_updated: "2026-03-26T04:55:59.144Z"
-last_activity: 2026-03-25 — Linear bot identity created, API key updated, bot persona instructions active
+stopped_at: "Completed 04-01-PLAN.md — self-improvement loop infrastructure"
+last_updated: "2026-03-26T07:00:00.000Z"
+last_activity: 2026-03-26 — fleet-ops-staging workspace dir, skill sync, approval flow added for nightly-review agent
 progress:
   total_phases: 4
   completed_phases: 2
@@ -25,17 +25,17 @@ See: docs/REQUIREMENTS.md (updated 2026-03-25)
 
 ## Current Position
 
-Phase: 03.1 of 4 (Phase 03.1: Polish and Hardening TODOs — COMPLETE)
-Plan: 03 of 3 in phase 03.1 (complete)
+Phase: 04 of 4 (Phase 04: Self-Improvement Loop — COMPLETE)
+Plan: 01 of 1 in phase 04 (complete)
 Status: All phases complete
-Last activity: 2026-03-25 — Linear bot identity created, API key updated, bot persona instructions active
+Last activity: 2026-03-26 — fleet-ops-staging workspace dir, skill sync, approval flow added for nightly-review agent
 
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5 (01-01, 02-01, 02-02, 03-02, 03.1-03)
+- Total plans completed: 6 (01-01, 02-01, 02-02, 03-02, 03.1-03, 04-01)
 - Average duration: ~70 min
 - Total execution time: ~6 hours
 
@@ -64,6 +64,8 @@ Progress: [██████████] 100%
 - [03.1-03]: Fleet uses dedicated Linear workspace member (fleet@krewtrack.com) instead of OAuth app — simpler, reusable identity for future integrations
 - [03.1-03]: Fleet uses impersonal/third-person style in Linear comments
 - [03.1-03]: groups/CLAUDE.md kept in manual sync with groups/global/CLAUDE.md
+- [04-01]: /workspace/extra/fleet-ops-staging/ is the correct path prefix for container workspace (not /workspace/)
+- [04-01]: nightly-review SKILL.md synced to container/skills/ for agent runtime access — same pattern applies to all container skills
 
 ### Pending Todos
 
@@ -75,6 +77,6 @@ None — all phases complete.
 
 ## Session Continuity
 
-Last session: 2026-03-25T18:00:00.000Z
-Stopped at: "Completed 03.1-03-PLAN.md — all plans done"
+Last session: 2026-03-26T07:00:00.000Z
+Stopped at: "Completed 04-01-PLAN.md — self-improvement loop infrastructure"
 Resume file: None
