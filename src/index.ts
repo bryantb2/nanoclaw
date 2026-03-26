@@ -270,7 +270,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await channel.sendMessage(
             chatJid,
             text,
-            (latestThreadTs[chatJid] || threadTs) ? { threadTs: latestThreadTs[chatJid] || threadTs } : undefined,
+            latestThreadTs[chatJid] || threadTs
+              ? { threadTs: latestThreadTs[chatJid] || threadTs }
+              : undefined,
           );
           outputSentToUser = true;
         }
@@ -502,7 +504,9 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           // Update thread_ts to the latest trigger message for this group
-          const pipedTrigger = [...messagesToSend].reverse().find(m => TRIGGER_PATTERN.test(m.content.trim()));
+          const pipedTrigger = [...messagesToSend]
+            .reverse()
+            .find((m) => TRIGGER_PATTERN.test(m.content.trim()));
           if (pipedTrigger) latestThreadTs[chatJid] = pipedTrigger.id;
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
@@ -633,7 +637,7 @@ async function main(): Promise<void> {
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid] && TRIGGER_PATTERN.test(msg.content.trim())) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
@@ -649,7 +653,7 @@ async function main(): Promise<void> {
         }
       }
       // Fire-and-forget emoji reaction on inbound non-bot messages before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid] && TRIGGER_PATTERN.test(msg.content.trim())) {
         const ch = findChannel(channels, chatJid);
         ch?.reactToMessage?.(chatJid, msg.id, 'eyes')?.catch((err) =>
           logger.debug({ err }, 'Failed to add eyes reaction'),
@@ -828,7 +832,9 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       // Use the latest trigger message ts for threading (overrides stale container-baked ts)
-      const threadOpts = latestThreadTs[jid] ? { ...opts, threadTs: latestThreadTs[jid] } : opts;
+      const threadOpts = latestThreadTs[jid]
+        ? { ...opts, threadTs: latestThreadTs[jid] }
+        : opts;
       return channel.sendMessage(jid, text, threadOpts);
     },
     uploadFile: async (params) => {
