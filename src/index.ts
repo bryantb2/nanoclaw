@@ -70,6 +70,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+const latestThreadTs: Record<string, string> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -219,6 +220,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           isTriggerAllowed(chatJid, m.sender, allowlistCfgForThread)),
     );
   const threadTs = triggerMessage?.id;
+  if (threadTs) latestThreadTs[chatJid] = threadTs;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -268,7 +270,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await channel.sendMessage(
             chatJid,
             text,
-            threadTs ? { threadTs } : undefined,
+            (latestThreadTs[chatJid] || threadTs) ? { threadTs: latestThreadTs[chatJid] || threadTs } : undefined,
           );
           outputSentToUser = true;
         }
@@ -499,6 +501,9 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
+          // Update thread_ts to the latest trigger message for this group
+          const pipedTrigger = [...messagesToSend].reverse().find(m => TRIGGER_PATTERN.test(m.content.trim()));
+          if (pipedTrigger) latestThreadTs[chatJid] = pipedTrigger.id;
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
@@ -822,7 +827,9 @@ async function main(): Promise<void> {
     sendMessage: (jid, text, opts) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text, opts);
+      // Use the latest trigger message ts for threading (overrides stale container-baked ts)
+      const threadOpts = latestThreadTs[jid] ? { ...opts, threadTs: latestThreadTs[jid] } : opts;
+      return channel.sendMessage(jid, text, threadOpts);
     },
     uploadFile: async (params) => {
       const channel = channels.find((ch) => ch.uploadFile);
