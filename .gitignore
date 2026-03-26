@@ -46,3 +46,5 @@ groups/slack_fleet-ops/*
 .nanoclaw/
 
 agents-sdk-docs
+.env.emergency
+.infisical.json

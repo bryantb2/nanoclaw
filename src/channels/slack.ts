@@ -168,7 +168,11 @@ export class SlackChannel implements Channel {
     await this.syncChannelMetadata();
   }
 
-  async sendMessage(jid: string, text: string, opts?: { threadTs?: string }): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    opts?: { threadTs?: string },
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -207,7 +211,11 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async reactToMessage(channelId: string, messageTs: string, emoji: string): Promise<void> {
+  async reactToMessage(
+    channelId: string,
+    messageTs: string,
+    emoji: string,
+  ): Promise<void> {
     const rawChannelId = channelId.replace(/^slack:/, '');
     await this.app.client.reactions.add({
       channel: rawChannelId,
