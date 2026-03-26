@@ -55,14 +55,14 @@ Plans:
 | 01. Setup | 1/1 | Complete | 2026-03-25 |
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
-| 03.1. Polish + Hardening TODOs | 3/3 | Complete | 2026-03-25 |
+| 03.1. Polish + Hardening TODOs | 3/3 | Complete    | 2026-03-26 |
 
 ### Phase 03.1: Polish and Hardening TODOs (INSERTED)
 
 **Goal:** Ship deferred polish items: Slack threading, cost tracking, Linear OAuth bot persona
 **Requirements**: TBD
 **Depends on:** Phase 3
-**Plans:** 3+ plans (03.1-01 through 03.1-03 active)
+**Plans:** 1/1 plans complete
 
 Plans:
 - [x] 03.1-01: Slack threading + emoji reaction + cost tracking (feat commits only, no plan file)
