@@ -75,7 +75,7 @@ Plans:
 
 **Goal:** Enable nightly-review agent to propose and apply self-improvements with human approval gate
 **Depends on:** Phase 03.1
-**Plans:** 2/2 plans complete
+**Plans:** 2/0 plans complete
 
 Plans:
 - [x] 04-01: Server infra fixes — fleet-ops-staging workspace dir, cron to 3 AM, nightly-review SKILL.md synced to container/skills/, paths corrected in SKILL.md + CLAUDE.md, approval flow added
