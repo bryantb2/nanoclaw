@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-stopped_at: "03.1-03 checkpoint — tasks 1-2 done (bot persona), awaiting Linear OAuth token to complete task 4"
-last_updated: "2026-03-25T14:05:00.000Z"
-last_activity: 2026-03-25 — Linear bot persona added to CLAUDE.md; OAuth token swap pending
+status: complete
+stopped_at: "03.1-03 complete — all tasks done, Linear identity active on production server"
+last_updated: "2026-03-25T18:00:00.000Z"
+last_activity: 2026-03-25 — Linear bot identity (fleet@krewtrack.com) created, API key swapped on server, bot persona instructions in CLAUDE.md
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
-  percent: 75
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -20,24 +20,24 @@ progress:
 
 See: docs/REQUIREMENTS.md (updated 2026-03-25)
 
-**Core value:** Lightweight, secure AI agent fleet — one process, true container isolation, minimal complexity
-**Current focus:** Phase 03.1 polish — Linear OAuth token swap pending user browser action
+**Core value:** Lightweight, secure AI agent system — one process, true container isolation, minimal complexity
+**Current focus:** Phase 03.1 complete — all polish TODOs shipped
 
 ## Current Position
 
-Phase: 03.1 of 4 (Phase 03.1: Polish and Hardening TODOs — IN PROGRESS)
-Plan: 03 of TBD in phase 03.1 (checkpoint — tasks 3-4 pending)
-Status: Checkpoint — awaiting Linear OAuth token
-Last activity: 2026-03-25 — Linear bot persona added to CLAUDE.md; OAuth token swap pending
+Phase: 03.1 of 4 (Phase 03.1: Polish and Hardening TODOs — COMPLETE)
+Plan: 03 of 3 in phase 03.1 (complete)
+Status: All phases complete
+Last activity: 2026-03-25 — Linear bot identity created, API key updated, bot persona instructions active
 
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4 (01-01, 02-01, 02-02, 03-02)
-- Average duration: ~83 min
-- Total execution time: ~5.5 hours
+- Total plans completed: 5 (01-01, 02-01, 02-02, 03-02, 03.1-03)
+- Average duration: ~70 min
+- Total execution time: ~6 hours
 
 **By Phase:**
 
@@ -46,6 +46,7 @@ Progress: [██████████] 100%
 | 01-setup | 1 | ~60 min | 60 min |
 | 02-core-agent | 2 | ~3h | ~90 min |
 | 03-operational-hardening | 2 | ~90 min | ~45 min |
+| 03.1-polish-hardening-todos | 3 | ~30 min | ~10 min |
 
 *Updated after each plan completion*
 
@@ -60,7 +61,8 @@ Progress: [██████████] 100%
 - [02-02]: Cost tracking (T9) has no native support — TODO for Phase 3
 - [Phase 03-operational-hardening]: T20 interrupt notification posts to channel (not thread) when thread_ts is null — accepted as correct behavior
 - [Phase 03-operational-hardening]: IPC file delivery requires Write tool not echo — echo produces malformed JSON due to shell escaping
-- [03.1-03]: Fleet uses impersonal/third-person style in Linear comments as an OAuth bot app
+- [03.1-03]: Fleet uses dedicated Linear workspace member (fleet@krewtrack.com) instead of OAuth app — simpler, reusable identity for future integrations
+- [03.1-03]: Fleet uses impersonal/third-person style in Linear comments
 - [03.1-03]: groups/CLAUDE.md kept in manual sync with groups/global/CLAUDE.md
 
 ### Pending Todos
@@ -69,10 +71,10 @@ Progress: [██████████] 100%
 
 ### Blockers/Concerns
 
-None — core pipeline working. Two open items are enhancements, not blockers.
+None — all phases complete.
 
 ## Session Continuity
 
-Last session: 2026-03-25T14:05:00.000Z
-Stopped at: "03.1-03 checkpoint — tasks 1-2 done (bot persona), awaiting Linear OAuth token to complete task 4"
+Last session: 2026-03-25T18:00:00.000Z
+Stopped at: "Completed 03.1-03-PLAN.md — all plans done"
 Resume file: None

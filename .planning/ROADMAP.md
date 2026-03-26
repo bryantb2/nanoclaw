@@ -55,7 +55,7 @@ Plans:
 | 01. Setup | 1/1 | Complete | 2026-03-25 |
 | 02. Core Agent | 2/2 | Complete    | 2026-03-25 |
 | 03. Operational Hardening | 2/2 | Complete    | 2026-03-25 |
-| 03.1. Polish + Hardening TODOs | 2/3+ | In Progress (checkpoint) | — |
+| 03.1. Polish + Hardening TODOs | 3/3 | Complete | 2026-03-25 |
 
 ### Phase 03.1: Polish and Hardening TODOs (INSERTED)
 
@@ -67,4 +67,4 @@ Plans:
 Plans:
 - [x] 03.1-01: Slack threading + emoji reaction + cost tracking (feat commits only, no plan file)
 - [x] 03.1-02: Engineering standards + QA policy + display conventions added to CLAUDE.md
-- [ ] 03.1-03: Linear OAuth app + bot persona (tasks 1-2 done, checkpoint at task 3 — OAuth token)
+- [x] 03.1-03: Linear bot identity (fleet@krewtrack.com workspace member) + bot persona instructions in CLAUDE.md
