@@ -719,10 +719,13 @@ function migrateJsonState(): void {
   }
 }
 
-
 // --- Cost tracking ---
 
-export function appendCostLog(groupFolder: string, chatJid: string, costUsd: number): void {
+export function appendCostLog(
+  groupFolder: string,
+  chatJid: string,
+  costUsd: number,
+): void {
   db.prepare(
     `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd) VALUES (?, ?, datetime('now'), ?)`,
   ).run(groupFolder, chatJid, costUsd);
@@ -744,7 +747,9 @@ export function getCostSummary(groupFolder: string): {
     )
     .get(groupFolder) as { total: number };
   const allTimeRow = db
-    .prepare(`SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_log WHERE group_folder = ?`)
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_log WHERE group_folder = ?`,
+    )
     .get(groupFolder) as { total: number };
   return {
     todayUsd: todayRow.total,
