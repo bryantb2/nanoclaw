@@ -46,10 +46,12 @@ function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const remainSecs = seconds % 60;
-  if (minutes < 60) return remainSecs > 0 ? `${minutes}m ${remainSecs}s` : `${minutes}m`;
+  if (minutes < 60)
+    return remainSecs > 0 ? `${minutes}m ${remainSecs}s` : `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const remainMins = minutes % 60;
-  if (hours < 24) return remainMins > 0 ? `${hours}h ${remainMins}m` : `${hours}h`;
+  if (hours < 24)
+    return remainMins > 0 ? `${hours}h ${remainMins}m` : `${hours}h`;
   const days = Math.floor(hours / 24);
   const remainHours = hours % 24;
   return remainHours > 0 ? `${days}d ${remainHours}h` : `${days}d`;
@@ -82,7 +84,9 @@ function formatTasksTable(
   const byFolder = new Map(inFlight.map((t) => [t.group_folder, t]));
 
   const lines: string[] = ['*Running Tasks*', '```'];
-  lines.push('Group           Duration   Message Preview                   Container');
+  lines.push(
+    'Group           Duration   Message Preview                   Container',
+  );
   lines.push('─'.repeat(80));
 
   for (const a of active) {
@@ -289,7 +293,10 @@ export class SlackChannel implements Channel {
 
       let diskUsage = 'unavailable';
       try {
-        const dfOut = execSync('df -h / | tail -1', { encoding: 'utf8', timeout: 2000 });
+        const dfOut = execSync('df -h / | tail -1', {
+          encoding: 'utf8',
+          timeout: 2000,
+        });
         const parts = dfOut.trim().split(/\s+/);
         // df -h columns: Filesystem, Size, Used, Avail, Use%, Mounted
         if (parts.length >= 5) {
@@ -301,7 +308,11 @@ export class SlackChannel implements Channel {
 
       let onecliStatus = 'not running';
       try {
-        execSync('pgrep -x onecli', { encoding: 'utf8', stdio: 'pipe', timeout: 1000 });
+        execSync('pgrep -x onecli', {
+          encoding: 'utf8',
+          stdio: 'pipe',
+          timeout: 1000,
+        });
         onecliStatus = 'connected';
       } catch {
         // process not found
@@ -326,6 +337,44 @@ export class SlackChannel implements Channel {
       );
       const text = formatScheduledTable(activeTasks);
       await respond({ response_type: 'ephemeral', text });
+    });
+
+    this.app.command('/cancel', async ({ ack, respond, command }) => {
+      await ack();
+      const text = command.text?.trim();
+      const queue = this.opts.queue;
+      if (!queue) {
+        await respond({ response_type: 'ephemeral', text: 'Queue not available.' });
+        return;
+      }
+
+      // If taskId provided, find the group for that task.
+      // Otherwise, find the group for the invoking channel.
+      const active = queue.getActiveState();
+      const target = text
+        ? active.find((a) => a.runningTaskId === text)
+        : active.find((a) => a.groupJid.includes(command.channel_id));
+
+      if (!target) {
+        await respond({
+          response_type: 'ephemeral',
+          text: 'No task running in this channel.',
+        });
+        return;
+      }
+
+      const success = queue.forceStopGroup(target.groupJid);
+      if (success) {
+        await respond({
+          response_type: 'ephemeral',
+          text: `Cancelling task in ${target.groupFolder}... (15s grace period)`,
+        });
+      } else {
+        await respond({
+          response_type: 'ephemeral',
+          text: 'Failed to cancel — container may have already stopped.',
+        });
+      }
     });
   }
 

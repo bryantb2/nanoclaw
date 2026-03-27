@@ -626,6 +626,7 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
+    queue,
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
@@ -634,6 +635,30 @@ async function main(): Promise<void> {
           logger.error({ err, chatJid }, 'Remote control command error'),
         );
         return;
+      }
+
+      // Cancel command — intercept before storing as a task message
+      const lowerTrimmed = trimmed.toLowerCase();
+      if (TRIGGER_PATTERN.test(trimmed) && lowerTrimmed.endsWith('cancel')) {
+        const success = queue.forceStopGroup(chatJid);
+        const ch = findChannel(channels, chatJid);
+        if (success) {
+          ch
+            ?.sendMessage(
+              chatJid,
+              'Cancelling task... Agent has 15 seconds to commit work before hard stop.',
+            )
+            ?.catch((err: unknown) =>
+              logger.error({ err, chatJid }, 'Cancel ack send error'),
+            );
+        } else {
+          ch
+            ?.sendMessage(chatJid, 'No active task to cancel in this channel.')
+            ?.catch((err: unknown) =>
+              logger.error({ err, chatJid }, 'Cancel ack send error'),
+            );
+        }
+        return; // Do NOT fall through to storeMessage
       }
 
       // Sender allowlist drop mode: discard messages from denied senders before storing

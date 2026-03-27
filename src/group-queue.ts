@@ -1,9 +1,10 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
+import { stopContainer } from './container-runtime.js';
 
 interface QueuedTask {
   id: string;
@@ -144,7 +145,11 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
-    if (groupFolder) state.groupFolder = groupFolder;
+    if (groupFolder) {
+      state.groupFolder = groupFolder;
+      // Clean up any stale .git/index.lock left behind by a cancelled container
+      GroupQueue.cleanGitLock(groupFolder);
+    }
   }
 
   /**
@@ -229,6 +234,60 @@ export class GroupQueue {
       fs.writeFileSync(path.join(inputDir, '_close'), '');
     } catch {
       // ignore
+    }
+  }
+
+  /**
+   * Force-stop the active container for a group.
+   * Step 1: Write _cancel sentinel so the agent can commit WIP and exit gracefully.
+   * Step 2: After a 15-second grace period, hard-kill the container if still active.
+   * Returns true if a stop was initiated, false if the group has no active container.
+   */
+  forceStopGroup(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.groupFolder || !state.containerName) return false;
+
+    // Step 1: Write _cancel sentinel (mirrors _close pattern in closeStdin)
+    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+      fs.writeFileSync(path.join(inputDir, '_cancel'), '');
+    } catch {
+      // ignore — agent will be hard-killed after grace period anyway
+    }
+
+    // Step 2: 15-second grace period, then hard kill if container is still active
+    const containerName = state.containerName;
+    setTimeout(() => {
+      if (state.active && state.containerName === containerName) {
+        try {
+          execSync(stopContainer(containerName), { stdio: 'pipe', timeout: 5000 });
+        } catch {
+          // container may have already stopped — ignore
+        }
+      }
+    }, 15_000);
+
+    return true;
+  }
+
+  /**
+   * Remove the .git/index.lock file from a group workspace if present.
+   * Called before spawning a new container to prevent git lock conflicts
+   * left behind by a previously cancelled container.
+   */
+  static cleanGitLock(groupFolder: string): void {
+    const lockPath = path.join(
+      DATA_DIR,
+      'workspaces',
+      groupFolder,
+      '.git',
+      'index.lock',
+    );
+    try {
+      fs.rmSync(lockPath);
+    } catch {
+      // not present — ignore
     }
   }
 
