@@ -964,7 +964,7 @@ describe('SlackChannel', () => {
 
     it('registers /status command handler', () => {
       new SlackChannel(createTestOpts());
-      expect(currentApp().commandHandlers.has('/status')).toBe(true);
+      expect(currentApp().commandHandlers.has('/fleet-status')).toBe(true);
     });
 
     it('returns ephemeral response with uptime and container count', async () => {
@@ -973,7 +973,7 @@ describe('SlackChannel', () => {
         getActiveCount: vi.fn(() => 2),
       };
       const opts = createTestOpts({ queue: mockQueue as any });
-      const { respond } = await fireCommand('/status', opts);
+      const { respond } = await fireCommand('/fleet-status', opts);
       const call = vi.mocked(respond).mock.calls[0][0] as any;
       expect(call.response_type).toBe('ephemeral');
       expect(call.text).toContain('Uptime');
@@ -1073,10 +1073,7 @@ describe('SlackChannel', () => {
   // --- /cancel command ---
 
   describe('/cancel command', () => {
-    async function fireCommandWithQueue(
-      text: string,
-      queueOverride: any,
-    ) {
+    async function fireCommandWithQueue(text: string, queueOverride: any) {
       const opts = createTestOpts({ queue: queueOverride });
       new SlackChannel(opts);
       const handler = currentApp().commandHandlers.get('/cancel');
@@ -1130,7 +1127,9 @@ describe('SlackChannel', () => {
           text: expect.stringContaining('dev-team'),
         }),
       );
-      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith('slack:C0123456789');
+      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith(
+        'slack:C0123456789',
+      );
     });
 
     it('targets a specific task by ID when taskId argument is provided', async () => {
@@ -1155,7 +1154,9 @@ describe('SlackChannel', () => {
       };
       const { respond } = await fireCommandWithQueue('task-abc-123', mockQueue);
       // Should target the task with matching ID, not the invoking channel
-      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith('slack:C0000000001');
+      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith(
+        'slack:C0000000001',
+      );
       expect(respond).toHaveBeenCalledWith(
         expect.objectContaining({ response_type: 'ephemeral' }),
       );
@@ -1174,7 +1175,10 @@ describe('SlackChannel', () => {
         ]),
         forceStopGroup: vi.fn(() => false),
       };
-      const { respond } = await fireCommandWithQueue('task-nonexistent', mockQueue);
+      const { respond } = await fireCommandWithQueue(
+        'task-nonexistent',
+        mockQueue,
+      );
       expect(respond).toHaveBeenCalledWith(
         expect.objectContaining({
           text: expect.stringContaining('No task running'),

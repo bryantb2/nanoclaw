@@ -286,7 +286,7 @@ export class SlackChannel implements Channel {
       await respond({ response_type: 'ephemeral', text });
     });
 
-    this.app.command('/status', async ({ ack, respond }) => {
+    this.app.command('/fleet-status', async ({ ack, respond }) => {
       await ack();
       const uptimeSec = Math.floor(process.uptime());
       const containerCount = this.opts.queue?.getActiveCount() ?? 0;
@@ -344,7 +344,10 @@ export class SlackChannel implements Channel {
       const text = command.text?.trim();
       const queue = this.opts.queue;
       if (!queue) {
-        await respond({ response_type: 'ephemeral', text: 'Queue not available.' });
+        await respond({
+          response_type: 'ephemeral',
+          text: 'Queue not available.',
+        });
         return;
       }
 
