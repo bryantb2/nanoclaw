@@ -24,6 +24,8 @@ vi.mock('../logger.js', () => ({
 // Mock db
 vi.mock('../db.js', () => ({
   updateChatName: vi.fn(),
+  getInFlightTasksList: vi.fn(() => []),
+  getAllTasks: vi.fn(() => []),
 }));
 
 // --- @slack/bolt mock ---
@@ -64,8 +66,14 @@ vi.mock('@slack/bolt', () => ({
       appRef.current = this;
     }
 
+    commandHandlers = new Map<string, Handler>();
+
     event(name: string, handler: Handler) {
       this.eventHandlers.set(name, handler);
+    }
+
+    command(name: string, handler: Handler) {
+      this.commandHandlers.set(name, handler);
     }
 
     async start() {}
@@ -83,7 +91,7 @@ vi.mock('../env.js', () => ({
 }));
 
 import { SlackChannel, SlackChannelOpts } from './slack.js';
-import { updateChatName } from '../db.js';
+import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
 import { readEnvFile } from '../env.js';
 
 // --- Test helpers ---

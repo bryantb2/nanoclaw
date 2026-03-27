@@ -12,6 +12,7 @@ import {
   OnChatMetadata,
   RegisteredGroup,
 } from '../types.js';
+import type { GroupQueue } from '../group-queue.js';
 
 // Slack's chat.postMessage API limits text to ~4000 characters per call.
 /**
@@ -38,6 +39,7 @@ export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  queue?: GroupQueue;
 }
 
 export class SlackChannel implements Channel {

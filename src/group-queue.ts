@@ -184,6 +184,39 @@ export class GroupQueue {
   }
 
   /**
+   * Returns a snapshot of all currently active group containers.
+   * Used by slash command handlers to display running tasks.
+   */
+  getActiveState(): Array<{
+    groupJid: string;
+    containerName: string;
+    groupFolder: string;
+    isTaskContainer: boolean;
+    runningTaskId: string | null;
+  }> {
+    const result = [];
+    for (const [jid, state] of this.groups) {
+      if (state.active && state.containerName) {
+        result.push({
+          groupJid: jid,
+          containerName: state.containerName,
+          groupFolder: state.groupFolder ?? '',
+          isTaskContainer: state.isTaskContainer,
+          runningTaskId: state.runningTaskId,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Returns the number of currently active containers.
+   */
+  getActiveCount(): number {
+    return this.activeCount;
+  }
+
+  /**
    * Signal the active container to wind down by writing a close sentinel.
    */
   closeStdin(groupJid: string): void {

@@ -141,6 +141,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add started_at column to in_flight_tasks if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE in_flight_tasks ADD COLUMN started_at TEXT DEFAULT (datetime('now'))`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -764,6 +773,7 @@ export interface InFlightTask {
   channel_id: string;
   thread_ts: string | null;
   original_message: string | null;
+  started_at?: string;
 }
 
 export function insertInFlightTask(params: Omit<InFlightTask, 'id'>): number {
@@ -783,6 +793,10 @@ export function insertInFlightTask(params: Omit<InFlightTask, 'id'>): number {
 
 export function deleteInFlightTask(id: number): void {
   db.prepare('DELETE FROM in_flight_tasks WHERE id = ?').run(id);
+}
+
+export function getInFlightTasksList(): InFlightTask[] {
+  return db.prepare('SELECT * FROM in_flight_tasks').all() as InFlightTask[];
 }
 
 export function getAndClearInFlightTasks(): InFlightTask[] {
