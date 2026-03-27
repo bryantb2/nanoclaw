@@ -1,8 +1,10 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
+import { execSync } from 'child_process';
+
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { updateChatName } from '../db.js';
+import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -34,6 +36,128 @@ const MAX_MESSAGE_LENGTH = 4000;
 // we filter to regular messages (GenericMessageEvent, subtype undefined) and bot messages
 // (BotMessageEvent, subtype 'bot_message') so we can track our own output.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
+
+// --- Slash command helpers ---
+
+/**
+ * Format elapsed seconds as human-readable duration: "3m 24s", "1h 5m", "2d 3h"
+ */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainSecs = seconds % 60;
+  if (minutes < 60) return remainSecs > 0 ? `${minutes}m ${remainSecs}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainMins = minutes % 60;
+  if (hours < 24) return remainMins > 0 ? `${hours}h ${remainMins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remainHours = hours % 24;
+  return remainHours > 0 ? `${days}d ${remainHours}h` : `${days}d`;
+}
+
+/**
+ * Format the /tasks compact table.
+ * Cross-references active container list with in-flight task rows for duration.
+ */
+function formatTasksTable(
+  active: Array<{
+    groupJid: string;
+    containerName: string;
+    groupFolder: string;
+    isTaskContainer: boolean;
+    runningTaskId: string | null;
+  }>,
+  inFlight: Array<{
+    id: number;
+    group_folder: string;
+    channel_id: string;
+    thread_ts: string | null;
+    original_message: string | null;
+    started_at?: string;
+  }>,
+): string {
+  if (active.length === 0) return 'No tasks running.';
+
+  // Build lookup: groupFolder -> inFlight row
+  const byFolder = new Map(inFlight.map((t) => [t.group_folder, t]));
+
+  const lines: string[] = ['*Running Tasks*', '```'];
+  lines.push('Group           Duration   Message Preview                   Container');
+  lines.push('─'.repeat(80));
+
+  for (const a of active) {
+    const row = byFolder.get(a.groupFolder);
+    let duration = '?';
+    if (row?.started_at) {
+      const startMs = new Date(row.started_at).getTime();
+      const elapsedSec = Math.floor((Date.now() - startMs) / 1000);
+      duration = formatDuration(Math.max(0, elapsedSec));
+    }
+    const preview = (row?.original_message ?? '').slice(0, 50);
+    const group = a.groupFolder.padEnd(16).slice(0, 16);
+    const dur = duration.padEnd(11).slice(0, 11);
+    const msg = preview.padEnd(34).slice(0, 34);
+    lines.push(`${group}${dur}${msg}${a.containerName}`);
+  }
+
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
+ * Format the /scheduled compact table.
+ */
+function formatScheduledTable(
+  tasks: Array<{
+    id: string;
+    group_folder: string;
+    schedule_type: string;
+    schedule_value: string;
+    next_run: string | null;
+  }>,
+): string {
+  if (tasks.length === 0) return 'No scheduled tasks.';
+
+  const lines: string[] = ['*Scheduled Tasks*', '```'];
+  lines.push('ID              Group           Schedule        Next Run (MT)');
+  lines.push('─'.repeat(72));
+
+  for (const t of tasks) {
+    const nextRunMt = t.next_run
+      ? new Date(t.next_run).toLocaleString('en-US', {
+          timeZone: 'America/Denver',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        })
+      : 'pending';
+
+    const id = t.id.slice(0, 16).padEnd(16);
+    const group = t.group_folder.padEnd(16).slice(0, 16);
+    const schedule = t.schedule_value.padEnd(16).slice(0, 16);
+    lines.push(`${id}${group}${schedule}${nextRunMt}`);
+  }
+
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
+ * Format process.uptime() as "Xd Xh Xm Xs"
+ */
+function formatUptime(uptimeSec: number): string {
+  const days = Math.floor(uptimeSec / 86400);
+  const hours = Math.floor((uptimeSec % 86400) / 3600);
+  const minutes = Math.floor((uptimeSec % 3600) / 60);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${Math.floor(uptimeSec % 60)}s`);
+  return parts.join(' ');
+}
 
 export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
@@ -144,6 +268,64 @@ export class SlackChannel implements Channel {
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
       });
+    });
+
+    // --- Slash command handlers ---
+    // ack() is always called first (before any data reads) to beat the 3-second Slack window.
+    // All reads are synchronous SQLite or Map lookups (<1ms each).
+
+    this.app.command('/tasks', async ({ ack, respond }) => {
+      await ack();
+      const active = this.opts.queue?.getActiveState() ?? [];
+      const inFlight = getInFlightTasksList();
+      const text = formatTasksTable(active, inFlight);
+      await respond({ response_type: 'ephemeral', text });
+    });
+
+    this.app.command('/status', async ({ ack, respond }) => {
+      await ack();
+      const uptimeSec = Math.floor(process.uptime());
+      const containerCount = this.opts.queue?.getActiveCount() ?? 0;
+
+      let diskUsage = 'unavailable';
+      try {
+        const dfOut = execSync('df -h / | tail -1', { encoding: 'utf8', timeout: 2000 });
+        const parts = dfOut.trim().split(/\s+/);
+        // df -h columns: Filesystem, Size, Used, Avail, Use%, Mounted
+        if (parts.length >= 5) {
+          diskUsage = `${parts[2]} used of ${parts[1]} (${parts[4]})`;
+        }
+      } catch {
+        // Not in a Docker environment or df unavailable
+      }
+
+      let onecliStatus = 'not running';
+      try {
+        execSync('pgrep -x onecli', { encoding: 'utf8', stdio: 'pipe', timeout: 1000 });
+        onecliStatus = 'connected';
+      } catch {
+        // process not found
+      }
+
+      const text = [
+        '*NanoClaw Status*',
+        `• Uptime: ${formatUptime(uptimeSec)}`,
+        `• Active containers: ${containerCount}`,
+        `• Disk: ${diskUsage}`,
+        `• OneCLI: ${onecliStatus}`,
+      ].join('\n');
+
+      await respond({ response_type: 'ephemeral', text });
+    });
+
+    this.app.command('/scheduled', async ({ ack, respond }) => {
+      await ack();
+      const allTasks = getAllTasks();
+      const activeTasks = allTasks.filter(
+        (t) => t.status === 'active' && t.next_run,
+      );
+      const text = formatScheduledTable(activeTasks);
+      await respond({ response_type: 'ephemeral', text });
     });
   }
 

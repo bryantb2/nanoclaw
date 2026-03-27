@@ -864,4 +864,199 @@ describe('SlackChannel', () => {
       expect(channel.name).toBe('slack');
     });
   });
+
+  // --- /tasks command ---
+
+  describe('/tasks command', () => {
+    async function fireCommand(name: string, opts: SlackChannelOpts) {
+      new SlackChannel(opts);
+      const handler = currentApp().commandHandlers.get(name);
+      if (!handler) throw new Error(`No handler registered for ${name}`);
+      const ack = vi.fn().mockResolvedValue(undefined);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler({ ack, respond, command: { channel_id: 'C0123456789' } });
+      return { ack, respond };
+    }
+
+    it('registers /tasks command handler', () => {
+      new SlackChannel(createTestOpts());
+      expect(currentApp().commandHandlers.has('/tasks')).toBe(true);
+    });
+
+    it('calls ack() first', async () => {
+      const { ack, respond } = await fireCommand('/tasks', createTestOpts());
+      expect(ack).toHaveBeenCalled();
+      expect(respond).toHaveBeenCalled();
+    });
+
+    it('returns ephemeral response', async () => {
+      const { respond } = await fireCommand('/tasks', createTestOpts());
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ response_type: 'ephemeral' }),
+      );
+    });
+
+    it('returns "No tasks running" when no active containers', async () => {
+      vi.mocked(getInFlightTasksList).mockReturnValue([]);
+      const mockQueue = { getActiveState: vi.fn(() => []), getActiveCount: vi.fn(() => 0) };
+      const opts = createTestOpts({ queue: mockQueue as any });
+      const { respond } = await fireCommand('/tasks', opts);
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('No tasks running'),
+        }),
+      );
+    });
+
+    it('returns container info when tasks are running', async () => {
+      const startedAt = new Date(Date.now() - 90000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+      vi.mocked(getInFlightTasksList).mockReturnValue([
+        {
+          id: 1,
+          group_folder: 'dev-team',
+          channel_id: 'C0123456789',
+          thread_ts: null,
+          original_message: 'Build the authentication module for the new API endpoint',
+          started_at: startedAt,
+        },
+      ]);
+      const mockQueue = {
+        getActiveState: vi.fn(() => [
+          {
+            groupJid: 'slack:C0123456789',
+            containerName: 'nanoclaw-dev-team-1711234567',
+            groupFolder: 'dev-team',
+            isTaskContainer: false,
+            runningTaskId: null,
+          },
+        ]),
+        getActiveCount: vi.fn(() => 1),
+      };
+      const opts = createTestOpts({ queue: mockQueue as any });
+      const { respond } = await fireCommand('/tasks', opts);
+      const call = vi.mocked(respond).mock.calls[0][0] as any;
+      expect(call.text).toContain('dev-team');
+      expect(call.text).toContain('nanoclaw-dev-team-1711234567');
+      // Should include truncated message preview
+      expect(call.text).toContain('Build the authentication');
+    });
+  });
+
+  // --- /status command ---
+
+  describe('/status command', () => {
+    async function fireCommand(name: string, opts: SlackChannelOpts) {
+      new SlackChannel(opts);
+      const handler = currentApp().commandHandlers.get(name);
+      if (!handler) throw new Error(`No handler registered for ${name}`);
+      const ack = vi.fn().mockResolvedValue(undefined);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler({ ack, respond, command: {} });
+      return { ack, respond };
+    }
+
+    it('registers /status command handler', () => {
+      new SlackChannel(createTestOpts());
+      expect(currentApp().commandHandlers.has('/status')).toBe(true);
+    });
+
+    it('returns ephemeral response with uptime and container count', async () => {
+      const mockQueue = { getActiveState: vi.fn(() => []), getActiveCount: vi.fn(() => 2) };
+      const opts = createTestOpts({ queue: mockQueue as any });
+      const { respond } = await fireCommand('/status', opts);
+      const call = vi.mocked(respond).mock.calls[0][0] as any;
+      expect(call.response_type).toBe('ephemeral');
+      expect(call.text).toContain('Uptime');
+      expect(call.text).toContain('2'); // active container count
+    });
+  });
+
+  // --- /scheduled command ---
+
+  describe('/scheduled command', () => {
+    async function fireCommand(name: string, opts: SlackChannelOpts) {
+      new SlackChannel(opts);
+      const handler = currentApp().commandHandlers.get(name);
+      if (!handler) throw new Error(`No handler registered for ${name}`);
+      const ack = vi.fn().mockResolvedValue(undefined);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler({ ack, respond, command: {} });
+      return { ack, respond };
+    }
+
+    it('registers /scheduled command handler', () => {
+      new SlackChannel(createTestOpts());
+      expect(currentApp().commandHandlers.has('/scheduled')).toBe(true);
+    });
+
+    it('returns "No scheduled tasks" when no active tasks', async () => {
+      vi.mocked(getAllTasks).mockReturnValue([]);
+      const { respond } = await fireCommand('/scheduled', createTestOpts());
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('No scheduled tasks'),
+        }),
+      );
+    });
+
+    it('returns ephemeral response', async () => {
+      vi.mocked(getAllTasks).mockReturnValue([]);
+      const { respond } = await fireCommand('/scheduled', createTestOpts());
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ response_type: 'ephemeral' }),
+      );
+    });
+
+    it('shows scheduled tasks with Mountain Time next run', async () => {
+      vi.mocked(getAllTasks).mockReturnValue([
+        {
+          id: 'task-001',
+          group_folder: 'dev-team',
+          chat_jid: 'slack:C0123456789',
+          prompt: 'Run weekly report',
+          schedule_type: 'cron',
+          schedule_value: '0 9 * * 1',
+          next_run: '2026-04-06T16:00:00.000Z', // 10am MT (UTC-6 MDT)
+          last_run: null,
+          last_result: null,
+          status: 'active',
+          created_at: '2026-03-01T00:00:00.000Z',
+          context_mode: 'isolated',
+          max_budget_usd: null,
+        },
+      ]);
+      const { respond } = await fireCommand('/scheduled', createTestOpts());
+      const call = vi.mocked(respond).mock.calls[0][0] as any;
+      expect(call.text).toContain('dev-team');
+      expect(call.text).toContain('0 9 * * 1');
+      // Should show time in Mountain Time (not UTC)
+      expect(call.text).not.toContain('16:00');
+    });
+
+    it('filters out inactive tasks', async () => {
+      vi.mocked(getAllTasks).mockReturnValue([
+        {
+          id: 'task-inactive',
+          group_folder: 'dev-team',
+          chat_jid: 'slack:C0123456789',
+          prompt: 'Inactive task',
+          schedule_type: 'cron',
+          schedule_value: '0 9 * * 1',
+          next_run: '2026-04-06T16:00:00.000Z',
+          last_run: null,
+          last_result: null,
+          status: 'paused',
+          created_at: '2026-03-01T00:00:00.000Z',
+          context_mode: 'isolated',
+          max_budget_usd: null,
+        },
+      ]);
+      const { respond } = await fireCommand('/scheduled', createTestOpts());
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('No scheduled tasks'),
+        }),
+      );
+    });
+  });
 });
