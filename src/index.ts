@@ -67,6 +67,9 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
+/** @internal — exported for testing only */
+export { runAgent as _runAgent };
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -330,12 +333,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   return true;
 }
 
+function isStaleSessionError(error?: string): boolean {
+  if (!error) return false;
+  return (
+    error.includes('No conversation found') ||
+    error.includes('session_not_found')
+  );
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   threadTs?: string,
+  retryCount = 0,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -399,6 +411,26 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      // Stale session recovery: clear session and retry once
+      if (isStaleSessionError(output.error) && retryCount < 1) {
+        logger.warn(
+          { group: group.name, error: output.error },
+          'Stale session detected, clearing and retrying',
+        );
+        // Clear both in-memory and persisted session
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+        // Warn user via Slack thread
+        const channel = findChannel(channels, chatJid);
+        if (channel && threadTs) {
+          await channel.sendMessage(chatJid, 'Session expired, starting fresh', {
+            threadTs,
+          });
+        }
+        // Retry with fresh session (no sessionId)
+        return runAgent(group, prompt, chatJid, onOutput, threadTs, retryCount + 1);
+      }
+
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',
@@ -413,7 +445,7 @@ async function runAgent(
     );
     if ((output.totalCostUsd ?? 0) > 0) {
       try {
-        appendCostLog(group.folder, chatJid, output.totalCostUsd);
+        appendCostLog(group.folder, chatJid, output.totalCostUsd!);
         const summary = getCostSummary(group.folder);
         const groupDir = resolveGroupFolderPath(group.folder);
         const costSummaryPath = path.join(groupDir, 'cost-summary.json');
