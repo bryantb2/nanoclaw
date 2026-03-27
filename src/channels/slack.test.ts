@@ -898,7 +898,10 @@ describe('SlackChannel', () => {
 
     it('returns "No tasks running" when no active containers', async () => {
       vi.mocked(getInFlightTasksList).mockReturnValue([]);
-      const mockQueue = { getActiveState: vi.fn(() => []), getActiveCount: vi.fn(() => 0) };
+      const mockQueue = {
+        getActiveState: vi.fn(() => []),
+        getActiveCount: vi.fn(() => 0),
+      };
       const opts = createTestOpts({ queue: mockQueue as any });
       const { respond } = await fireCommand('/tasks', opts);
       expect(respond).toHaveBeenCalledWith(
@@ -909,14 +912,18 @@ describe('SlackChannel', () => {
     });
 
     it('returns container info when tasks are running', async () => {
-      const startedAt = new Date(Date.now() - 90000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+      const startedAt = new Date(Date.now() - 90000)
+        .toISOString()
+        .replace('T', ' ')
+        .replace(/\.\d+Z$/, '');
       vi.mocked(getInFlightTasksList).mockReturnValue([
         {
           id: 1,
           group_folder: 'dev-team',
           channel_id: 'C0123456789',
           thread_ts: null,
-          original_message: 'Build the authentication module for the new API endpoint',
+          original_message:
+            'Build the authentication module for the new API endpoint',
           started_at: startedAt,
         },
       ]);
@@ -961,7 +968,10 @@ describe('SlackChannel', () => {
     });
 
     it('returns ephemeral response with uptime and container count', async () => {
-      const mockQueue = { getActiveState: vi.fn(() => []), getActiveCount: vi.fn(() => 2) };
+      const mockQueue = {
+        getActiveState: vi.fn(() => []),
+        getActiveCount: vi.fn(() => 2),
+      };
       const opts = createTestOpts({ queue: mockQueue as any });
       const { respond } = await fireCommand('/status', opts);
       const call = vi.mocked(respond).mock.calls[0][0] as any;
@@ -1056,6 +1066,136 @@ describe('SlackChannel', () => {
         expect.objectContaining({
           text: expect.stringContaining('No scheduled tasks'),
         }),
+      );
+    });
+  });
+
+  // --- /cancel command ---
+
+  describe('/cancel command', () => {
+    async function fireCommandWithQueue(
+      text: string,
+      queueOverride: any,
+    ) {
+      const opts = createTestOpts({ queue: queueOverride });
+      new SlackChannel(opts);
+      const handler = currentApp().commandHandlers.get('/cancel');
+      if (!handler) throw new Error('No handler registered for /cancel');
+      const ack = vi.fn().mockResolvedValue(undefined);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler({
+        ack,
+        respond,
+        command: { channel_id: 'C0123456789', text },
+      });
+      return { ack, respond };
+    }
+
+    it('registers /cancel command handler', () => {
+      new SlackChannel(createTestOpts());
+      expect(currentApp().commandHandlers.has('/cancel')).toBe(true);
+    });
+
+    it('returns "No task running" when no active container in channel', async () => {
+      const mockQueue = {
+        getActiveState: vi.fn(() => []),
+        forceStopGroup: vi.fn(() => false),
+      };
+      const { respond } = await fireCommandWithQueue('', mockQueue);
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          text: expect.stringContaining('No task running'),
+        }),
+      );
+    });
+
+    it('returns ephemeral ack with group name when container is active', async () => {
+      const mockQueue = {
+        getActiveState: vi.fn(() => [
+          {
+            groupJid: 'slack:C0123456789',
+            containerName: 'nanoclaw-dev-team-123',
+            groupFolder: 'dev-team',
+            isTaskContainer: false,
+            runningTaskId: null,
+          },
+        ]),
+        forceStopGroup: vi.fn(() => true),
+      };
+      const { respond } = await fireCommandWithQueue('', mockQueue);
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_type: 'ephemeral',
+          text: expect.stringContaining('dev-team'),
+        }),
+      );
+      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith('slack:C0123456789');
+    });
+
+    it('targets a specific task by ID when taskId argument is provided', async () => {
+      const mockQueue = {
+        getActiveState: vi.fn(() => [
+          {
+            groupJid: 'slack:C0000000001',
+            containerName: 'nanoclaw-dev-team-111',
+            groupFolder: 'dev-team',
+            isTaskContainer: true,
+            runningTaskId: 'task-abc-123',
+          },
+          {
+            groupJid: 'slack:C0000000002',
+            containerName: 'nanoclaw-design-222',
+            groupFolder: 'design',
+            isTaskContainer: true,
+            runningTaskId: 'task-xyz-456',
+          },
+        ]),
+        forceStopGroup: vi.fn(() => true),
+      };
+      const { respond } = await fireCommandWithQueue('task-abc-123', mockQueue);
+      // Should target the task with matching ID, not the invoking channel
+      expect(mockQueue.forceStopGroup).toHaveBeenCalledWith('slack:C0000000001');
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ response_type: 'ephemeral' }),
+      );
+    });
+
+    it('returns "No task running" when taskId not found in active state', async () => {
+      const mockQueue = {
+        getActiveState: vi.fn(() => [
+          {
+            groupJid: 'slack:C0000000001',
+            containerName: 'nanoclaw-dev-team-111',
+            groupFolder: 'dev-team',
+            isTaskContainer: true,
+            runningTaskId: 'task-abc-123',
+          },
+        ]),
+        forceStopGroup: vi.fn(() => false),
+      };
+      const { respond } = await fireCommandWithQueue('task-nonexistent', mockQueue);
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('No task running'),
+        }),
+      );
+    });
+
+    it('returns error message when queue is not available', async () => {
+      const opts = createTestOpts({ queue: undefined });
+      new SlackChannel(opts);
+      const handler = currentApp().commandHandlers.get('/cancel');
+      if (!handler) throw new Error('No /cancel handler');
+      const ack = vi.fn().mockResolvedValue(undefined);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler({
+        ack,
+        respond,
+        command: { channel_id: 'C0123456789', text: '' },
+      });
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ response_type: 'ephemeral' }),
       );
     });
   });

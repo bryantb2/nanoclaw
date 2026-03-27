@@ -580,6 +580,116 @@ describe('GroupQueue', () => {
     });
   });
 
+  // --- forceStopGroup() ---
+
+  describe('forceStopGroup()', () => {
+    it('returns false when group has no active container', () => {
+      // Group doesn't exist yet — should return false
+      expect(queue.forceStopGroup('nonexistent@g.us')).toBe(false);
+    });
+
+    it('returns false when group is known but not active', async () => {
+      const processMessages = vi.fn(async () => true);
+      queue.setProcessMessagesFn(processMessages);
+
+      // Trigger group creation via enqueue then let it complete
+      let resolve: () => void;
+      const processMessages2 = vi.fn(async () => {
+        await new Promise<void>((r) => { resolve = r; });
+        return true;
+      });
+      queue.setProcessMessagesFn(processMessages2);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+
+      // Complete the run so group is inactive
+      resolve!();
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Now inactive — forceStopGroup should return false
+      expect(queue.forceStopGroup('group1@g.us')).toBe(false);
+    });
+
+    it('writes _cancel sentinel file when group is active', async () => {
+      const fs = await import('fs');
+      let resolveProcess: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => { resolveProcess = resolve; });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+
+      const writeFileSync = vi.mocked(fs.default.writeFileSync);
+      writeFileSync.mockClear();
+
+      const result = queue.forceStopGroup('group1@g.us');
+      expect(result).toBe(true);
+
+      // Should have written a _cancel file
+      const cancelWrites = writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_cancel'),
+      );
+      expect(cancelWrites).toHaveLength(1);
+
+      resolveProcess!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('returns true on success for active group', async () => {
+      const fs = await import('fs');
+      let resolveProcess: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => { resolveProcess = resolve; });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+
+      expect(queue.forceStopGroup('group1@g.us')).toBe(true);
+
+      resolveProcess!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  });
+
+  // --- cleanGitLock() ---
+
+  describe('cleanGitLock()', () => {
+    it('calls rmSync to remove lock file when present', async () => {
+      const fs = await import('fs');
+      const rmSync = vi.mocked(fs.default.rmSync ?? (fs as any).default.rm);
+      // Re-mock rmSync since it's not in the current mock
+      const rmSyncMock = vi.fn();
+      vi.spyOn(fs.default, 'rmSync' as any).mockImplementation(rmSyncMock);
+
+      GroupQueue.cleanGitLock('test-group');
+
+      expect(rmSyncMock).toHaveBeenCalledWith(
+        expect.stringContaining('index.lock'),
+      );
+    });
+
+    it('does not throw when lock file is absent', async () => {
+      const fs = await import('fs');
+      vi.spyOn(fs.default, 'rmSync' as any).mockImplementationOnce(() => {
+        throw new Error('ENOENT: no such file');
+      });
+
+      // Should not throw
+      expect(() => GroupQueue.cleanGitLock('test-group')).not.toThrow();
+    });
+  });
+
   it('preempts when idle arrives with pending tasks', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
