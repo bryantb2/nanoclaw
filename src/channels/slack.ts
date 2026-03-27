@@ -83,7 +83,7 @@ function formatTasksTable(
   // Build lookup: groupFolder -> inFlight row
   const byFolder = new Map(inFlight.map((t) => [t.group_folder, t]));
 
-  const lines: string[] = ['*Running Tasks*', '```'];
+  const lines: string[] = ['*Running Agents*', '```'];
   lines.push(
     'Group           Duration   Message Preview                   Container',
   );
@@ -93,19 +93,22 @@ function formatTasksTable(
     const row = byFolder.get(a.groupFolder);
     let duration = '?';
     if (row?.started_at) {
-      const startMs = new Date(row.started_at).getTime();
+      // SQLite datetime('now') stores UTC without 'Z' suffix — append it
+      const startMs = new Date(row.started_at + 'Z').getTime();
       const elapsedSec = Math.floor((Date.now() - startMs) / 1000);
       duration = formatDuration(Math.max(0, elapsedSec));
     }
     // Extract user message from XML context wrapper, strip mentions
     const rawMsg = row?.original_message ?? '';
-    const msgMatch = rawMsg.match(/<message[^>]*>([\s\S]*?)<\/message>/);
+    const msgMatch = rawMsg.match(/<message\s+sender="[^"]*"[^>]*>([\s\S]*?)<\/message>/);
     const cleanMsg = (msgMatch ? msgMatch[1] : rawMsg)
       .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
       .replace(/<@[A-Z0-9]+>/g, '')
       .replace(/@\S+\s*/g, '')
-      .replace(/&lt;|&gt;|&quot;|&amp;/g, (m: string) =>
-        ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' }[m] || m),
+      .replace(
+        /&lt;|&gt;|&quot;|&amp;/g,
+        (m: string) =>
+          ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' })[m] || m,
       )
       .replace(/^[<>\s]+|[<>\s]+$/g, '')
       .trim();
