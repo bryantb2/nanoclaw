@@ -41,6 +41,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -307,9 +308,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // If the task was cancelled by the user, don't roll back — the user
     // intentionally stopped this work. Rolling back would respawn it.
     if (queue.wasCancelled(chatJid)) {
+      // Clear session so next interaction starts fresh, not resuming cancelled work
+      delete sessions[group.folder];
+      deleteSession(group.folder);
       logger.info(
         { group: group.name },
-        'Task was cancelled by user, skipping cursor rollback',
+        'Task was cancelled by user, session cleared, skipping cursor rollback',
       );
       return true;
     }
