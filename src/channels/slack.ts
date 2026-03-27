@@ -308,14 +308,13 @@ export class SlackChannel implements Channel {
 
       let onecliStatus = 'not running';
       try {
-        execSync('pgrep -x onecli', {
-          encoding: 'utf8',
-          stdio: 'pipe',
-          timeout: 1000,
-        });
-        onecliStatus = 'connected';
+        const resp = execSync(
+          'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:10254/api/secrets',
+          { encoding: 'utf8', stdio: 'pipe', timeout: 2000 },
+        );
+        onecliStatus = resp.trim() === '200' ? 'connected' : 'error';
       } catch {
-        // process not found
+        // OneCLI not reachable
       }
 
       const text = [
