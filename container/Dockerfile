@@ -37,6 +37,9 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Install googleapis for drive-tool.js (Google Drive/Docs CLI)
+RUN npm install -g googleapis
+
 # Create app directory
 WORKDIR /app
 
@@ -48,6 +51,9 @@ RUN npm install
 
 # Copy source code
 COPY agent-runner/ ./
+
+# Copy drive-tool.js CLI for Google Drive/Docs integration
+COPY drive-tool.js /app/drive-tool.js
 
 # Build TypeScript
 RUN npm run build
