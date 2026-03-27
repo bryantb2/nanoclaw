@@ -89,6 +89,22 @@ to the relevant Slack channel with a brief summary message.
 Keep the Slack message short: 2-3 sentence summary of key findings + the file attachment.
 Never dump a full report as a Slack message — always attach as a file.
 
+## When to Use Agent Teams
+
+**Default to parallel for independent work.** When you receive a request with 2+ items that have no shared files and no dependency chain (A must complete before B can start), use Agent Teams automatically -- you do not need the user to say "in parallel."
+
+Examples of independent work (use Agent Teams):
+- "Add validation to the login form AND update the user profile page"
+- "Write tests for the auth module AND the billing module"
+- "Fix the header alignment AND update the footer links"
+
+Examples of sequential work (stay single-agent):
+- "Fix the bug, then write a test for it" -- second depends on first
+- "Update the schema AND migrate existing data" -- shared database, ordering matters
+- Any single-file change
+
+Each Engineer subagent works in its own git worktree. Default to parallel unless you can identify a clear dependency.
+
 ## Cost Awareness
 - Use Agent Teams only when parallelism adds real value
 - For simple single-file changes, use a single subagent, not a team
