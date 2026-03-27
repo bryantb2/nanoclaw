@@ -18,6 +18,10 @@ let activeSession: RemoteControlSession | null = null;
 const URL_REGEX = /https:\/\/claude\.ai\/code\S+/;
 const URL_TIMEOUT_MS = 30_000;
 const URL_POLL_MS = 200;
+const STARTUP_GRACE_MS = 3_000;
+
+/** @internal — exported for testing only */
+export const _STARTUP_GRACE_MS = STARTUP_GRACE_MS;
 const STATE_FILE = path.join(DATA_DIR, 'remote-control.json');
 const STDOUT_FILE = path.join(DATA_DIR, 'remote-control.stdout');
 const STDERR_FILE = path.join(DATA_DIR, 'remote-control.stderr');
@@ -143,13 +147,9 @@ export async function startRemoteControl(
     const startTime = Date.now();
 
     const poll = () => {
-      // Check if process died
-      if (!isProcessAlive(pid)) {
-        resolve({ ok: false, error: 'Process exited before producing URL' });
-        return;
-      }
-
-      // Check for URL in stdout file
+      // Check for URL in stdout FIRST (before liveness check)
+      // This handles the case where `claude remote-control` forks/daemonizes —
+      // the original PID may appear dead, but the URL is already in stdout.
       let content = '';
       try {
         content = fs.readFileSync(STDOUT_FILE, 'utf-8');
@@ -177,8 +177,16 @@ export async function startRemoteControl(
         return;
       }
 
+      // Process dead check — skip during startup grace period
+      // The process may fork/daemonize and appear dead before writing its URL.
+      const elapsed = Date.now() - startTime;
+      if (!isProcessAlive(pid) && elapsed >= STARTUP_GRACE_MS) {
+        resolve({ ok: false, error: 'Process exited before producing URL' });
+        return;
+      }
+
       // Timeout check
-      if (Date.now() - startTime >= URL_TIMEOUT_MS) {
+      if (elapsed >= URL_TIMEOUT_MS) {
         try {
           process.kill(-pid, 'SIGTERM');
         } catch {

@@ -19,6 +19,7 @@ import {
   getActiveSession,
   _resetForTesting,
   _getStateFilePath,
+  _STARTUP_GRACE_MS,
 } from './remote-control.js';
 
 // --- Helpers ---
@@ -194,20 +195,27 @@ describe('remote-control', () => {
     });
 
     it('returns error if process exits before URL', async () => {
+      vi.useFakeTimers();
       const proc = createMockProcess(33333);
       spawnMock.mockReturnValue(proc);
       stdoutFileContent = '';
 
-      // Process is dead (poll will detect this)
+      // Process is dead (poll will detect this after grace period)
       vi.spyOn(process, 'kill').mockImplementation((() => {
         throw new Error('ESRCH');
       }) as any);
 
-      const result = await startRemoteControl('user1', 'tg:123', '/project');
+      const promise = startRemoteControl('user1', 'tg:123', '/project');
+      // Advance past grace period so the liveness check fires
+      await vi.advanceTimersByTimeAsync(_STARTUP_GRACE_MS + 200);
+
+      const result = await promise;
       expect(result).toEqual({
         ok: false,
         error: 'Process exited before producing URL',
       });
+
+      vi.useRealTimers();
     });
 
     it('times out if URL never appears', async () => {
@@ -243,6 +251,90 @@ describe('remote-control', () => {
         ok: false,
         error: 'Failed to start: ENOENT',
       });
+    });
+
+    // --- startup grace period ---
+
+    it('resolves with URL when process appears dead but URL found within grace period', async () => {
+      vi.useFakeTimers();
+      const proc = createMockProcess(55001);
+      spawnMock.mockReturnValue(proc);
+
+      // Process is immediately dead (forks/daemonizes)
+      vi.spyOn(process, 'kill').mockImplementation((() => {
+        throw new Error('ESRCH');
+      }) as any);
+
+      // URL appears in stdout on the first poll (before grace period expires)
+      stdoutFileContent = 'https://claude.ai/code?bridge=env_grace\n';
+
+      const promise = startRemoteControl('user1', 'tg:123', '/project');
+      // Advance one poll interval — still within grace period
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await promise;
+      expect(result).toEqual({
+        ok: true,
+        url: 'https://claude.ai/code?bridge=env_grace',
+      });
+
+      vi.useRealTimers();
+    });
+
+    it('returns error when process is dead AND grace period elapsed AND no URL in stdout', async () => {
+      vi.useFakeTimers();
+      const proc = createMockProcess(55002);
+      spawnMock.mockReturnValue(proc);
+
+      // Process is immediately dead
+      vi.spyOn(process, 'kill').mockImplementation((() => {
+        throw new Error('ESRCH');
+      }) as any);
+
+      // No URL ever appears
+      stdoutFileContent = '';
+
+      const promise = startRemoteControl('user1', 'tg:123', '/project');
+
+      // Advance past grace period so liveness check fires
+      await vi.advanceTimersByTimeAsync(_STARTUP_GRACE_MS + 200);
+
+      const result = await promise;
+      expect(result).toEqual({
+        ok: false,
+        error: 'Process exited before producing URL',
+      });
+
+      vi.useRealTimers();
+    });
+
+    it('succeeds normally when process stays alive and URL appears', async () => {
+      vi.useFakeTimers();
+      const proc = createMockProcess(55003);
+      spawnMock.mockReturnValue(proc);
+
+      // Process is alive
+      vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+
+      // URL appears after a few polls
+      stdoutFileContent = '';
+
+      const promise = startRemoteControl('user1', 'tg:123', '/project');
+
+      // Advance two polls with no URL
+      await vi.advanceTimersByTimeAsync(200 * 2);
+
+      // URL appears
+      stdoutFileContent = 'https://claude.ai/code?bridge=env_alive\n';
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await promise;
+      expect(result).toEqual({
+        ok: true,
+        url: 'https://claude.ai/code?bridge=env_alive',
+      });
+
+      vi.useRealTimers();
     });
   });
 
