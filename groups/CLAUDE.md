@@ -175,6 +175,37 @@ QA reviews the diff, runs tests, and signs off. Never skip this step.
 - Maximum 3 improvement proposals per nightly review — quality over quantity
 
 
+## Google Drive Skill
+
+You have access to Google Drive via the `drive-tool.js` CLI. This connects to the Krewtrack Shared Drive as fleet@krewtrack.com using a service account with domain-wide delegation.
+
+`GOOGLE_SERVICE_ACCOUNT_JSON` is injected from Infisical `/integrations` folder via entrypoint.sh multi-folder injection (`INFISICAL_FOLDERS="/clawhub,/integrations"`).
+
+### Read a file from Shared Drive
+```bash
+node /app/drive-tool.js read <FILE_ID>
+```
+Returns file content as plain text (Google Docs are exported as text; Google Sheets as CSV; other files as their raw content). FILE_ID is the long string from the Google Drive URL between `/d/` and `/edit`.
+
+### Write a summary to Shared Drive
+```bash
+node /app/drive-tool.js write --folder <FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
+```
+Creates a new Google Doc with the given title and content inside the specified folder. Returns the URL of the newly created Google Doc (e.g., `https://docs.google.com/document/d/...`).
+
+For large content, write to a temp file first, then pass with `--content "$(cat /tmp/file.txt)"`.
+
+### List files in a Shared Drive folder
+```bash
+node /app/drive-tool.js list --folder <FOLDER_ID>
+```
+Returns a JSON array of `{ id, name, mimeType }` objects for all non-trashed files in the folder.
+
+### Tips
+- File IDs are in Google Drive URLs: `https://docs.google.com/document/d/FILE_ID_HERE/edit`
+- Folder IDs are in Drive URLs: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
+- If you receive `unauthorized_client`, domain-wide delegation may still be propagating (up to 24h). Wait a few minutes and retry.
+
 ## MANDATORY: File Delivery Protocol
 ALWAYS follow this when creating ANY output file (reports, documents, analysis, research):
 1. Write the file to /workspace/output/
