@@ -304,6 +304,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
+    // If the task was cancelled by the user, don't roll back — the user
+    // intentionally stopped this work. Rolling back would respawn it.
+    if (queue.wasCancelled(chatJid)) {
+      logger.info(
+        { group: group.name },
+        'Task was cancelled by user, skipping cursor rollback',
+      );
+      return true;
+    }
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
@@ -643,20 +652,19 @@ async function main(): Promise<void> {
         const success = queue.forceStopGroup(chatJid);
         const ch = findChannel(channels, chatJid);
         if (success) {
-          ch
-            ?.sendMessage(
-              chatJid,
-              'Cancelling task... Agent has 15 seconds to commit work before hard stop.',
-            )
-            ?.catch((err: unknown) =>
-              logger.error({ err, chatJid }, 'Cancel ack send error'),
-            );
+          ch?.sendMessage(
+            chatJid,
+            'Cancelling task... Agent has 15 seconds to commit work before hard stop.',
+          )?.catch((err: unknown) =>
+            logger.error({ err, chatJid }, 'Cancel ack send error'),
+          );
         } else {
-          ch
-            ?.sendMessage(chatJid, 'No active task to cancel in this channel.')
-            ?.catch((err: unknown) =>
-              logger.error({ err, chatJid }, 'Cancel ack send error'),
-            );
+          ch?.sendMessage(
+            chatJid,
+            'No active task to cancel in this channel.',
+          )?.catch((err: unknown) =>
+            logger.error({ err, chatJid }, 'Cancel ack send error'),
+          );
         }
         return; // Do NOT fall through to storeMessage
       }

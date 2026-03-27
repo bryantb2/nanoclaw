@@ -26,6 +26,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  cancelled: boolean;
 }
 
 export class GroupQueue {
@@ -51,6 +52,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        cancelled: false,
       };
       this.groups.set(groupJid, state);
     }
@@ -248,7 +250,8 @@ export class GroupQueue {
     if (!state.active || !state.groupFolder || !state.containerName)
       return false;
 
-    // Step 1: Clear pending messages/tasks so the cancelled work doesn't respawn
+    // Step 1: Mark as cancelled + clear pending so work doesn't respawn
+    state.cancelled = true;
     state.pendingMessages = false;
     state.pendingTasks = [];
 
@@ -284,6 +287,16 @@ export class GroupQueue {
    * Called before spawning a new container to prevent git lock conflicts
    * left behind by a previously cancelled container.
    */
+  /**
+   * Check if a group was cancelled. Returns true once, then clears the flag.
+   */
+  wasCancelled(groupJid: string): boolean {
+    const state = this.groups.get(groupJid);
+    if (!state?.cancelled) return false;
+    state.cancelled = false;
+    return true;
+  }
+
   static cleanGitLock(groupFolder: string): void {
     const lockPath = path.join(
       DATA_DIR,
