@@ -407,7 +407,11 @@ async function runAgent(
     }
 
     // Track cost if reported
-    if (output.totalCostUsd && output.totalCostUsd > 0) {
+    logger.debug(
+      { group: group.name, totalCostUsd: output.totalCostUsd ?? null },
+      'Agent run cost data',
+    );
+    if ((output.totalCostUsd ?? 0) > 0) {
       try {
         appendCostLog(group.folder, chatJid, output.totalCostUsd);
         const summary = getCostSummary(group.folder);

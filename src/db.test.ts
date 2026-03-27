@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  appendCostLog,
   createTask,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getCostSummary,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -480,5 +482,52 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- cost_log ---
+
+describe('appendCostLog', () => {
+  it('inserts a row with correct groupFolder, chatJid, and costUsd', () => {
+    appendCostLog('main', 'group@g.us', 0.0042);
+    const summary = getCostSummary('main');
+    // allTimeUsd should reflect the inserted cost
+    expect(summary.allTimeUsd).toBeCloseTo(0.0042);
+  });
+
+  it('accumulates multiple entries for the same group', () => {
+    appendCostLog('main', 'group@g.us', 0.01);
+    appendCostLog('main', 'group@g.us', 0.02);
+    appendCostLog('main', 'group@g.us', 0.03);
+    const summary = getCostSummary('main');
+    expect(summary.allTimeUsd).toBeCloseTo(0.06);
+  });
+
+  it('isolates costs by group folder', () => {
+    appendCostLog('main', 'group@g.us', 0.10);
+    appendCostLog('other-group', 'group@g.us', 0.50);
+    const mainSummary = getCostSummary('main');
+    const otherSummary = getCostSummary('other-group');
+    expect(mainSummary.allTimeUsd).toBeCloseTo(0.10);
+    expect(otherSummary.allTimeUsd).toBeCloseTo(0.50);
+  });
+});
+
+describe('getCostSummary', () => {
+  it('returns zeros when no entries exist for a group', () => {
+    const summary = getCostSummary('nonexistent-group');
+    expect(summary.todayUsd).toBe(0);
+    expect(summary.weekUsd).toBe(0);
+    expect(summary.allTimeUsd).toBe(0);
+  });
+
+  it('returns correct aggregation for entries in the same group', () => {
+    appendCostLog('main', 'chat1@g.us', 0.005);
+    appendCostLog('main', 'chat2@g.us', 0.003);
+    const summary = getCostSummary('main');
+    expect(summary.allTimeUsd).toBeCloseTo(0.008);
+    // todayUsd and weekUsd should also include these (inserted now)
+    expect(summary.todayUsd).toBeCloseTo(0.008);
+    expect(summary.weekUsd).toBeCloseTo(0.008);
   });
 });
