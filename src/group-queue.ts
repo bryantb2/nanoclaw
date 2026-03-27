@@ -245,9 +245,14 @@ export class GroupQueue {
    */
   forceStopGroup(groupJid: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || !state.containerName) return false;
+    if (!state.active || !state.groupFolder || !state.containerName)
+      return false;
 
-    // Step 1: Write _cancel sentinel (mirrors _close pattern in closeStdin)
+    // Step 1: Clear pending messages/tasks so the cancelled work doesn't respawn
+    state.pendingMessages = false;
+    state.pendingTasks = [];
+
+    // Step 2: Write _cancel sentinel (mirrors _close pattern in closeStdin)
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
@@ -256,12 +261,15 @@ export class GroupQueue {
       // ignore — agent will be hard-killed after grace period anyway
     }
 
-    // Step 2: 15-second grace period, then hard kill if container is still active
+    // Step 3: 15-second grace period, then hard kill if container is still active
     const containerName = state.containerName;
     setTimeout(() => {
       if (state.active && state.containerName === containerName) {
         try {
-          execSync(stopContainer(containerName), { stdio: 'pipe', timeout: 5000 });
+          execSync(stopContainer(containerName), {
+            stdio: 'pipe',
+            timeout: 5000,
+          });
         } catch {
           // container may have already stopped — ignore
         }

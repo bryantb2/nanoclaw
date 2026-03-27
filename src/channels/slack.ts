@@ -97,7 +97,19 @@ function formatTasksTable(
       const elapsedSec = Math.floor((Date.now() - startMs) / 1000);
       duration = formatDuration(Math.max(0, elapsedSec));
     }
-    const preview = (row?.original_message ?? '').slice(0, 50);
+    // Extract user message from XML context wrapper, strip mentions
+    const rawMsg = row?.original_message ?? '';
+    const msgMatch = rawMsg.match(/<message[^>]*>([\s\S]*?)<\/message>/);
+    const cleanMsg = (msgMatch ? msgMatch[1] : rawMsg)
+      .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
+      .replace(/<@[A-Z0-9]+>/g, '')
+      .replace(/@\S+\s*/g, '')
+      .replace(/&lt;|&gt;|&quot;|&amp;/g, (m: string) =>
+        ({ '&lt;': '<', '&gt;': '>', '&quot;': '"', '&amp;': '&' }[m] || m),
+      )
+      .replace(/^[<>\s]+|[<>\s]+$/g, '')
+      .trim();
+    const preview = cleanMsg.slice(0, 50);
     const group = a.groupFolder.padEnd(16).slice(0, 16);
     const dur = duration.padEnd(11).slice(0, 11);
     const msg = preview.padEnd(34).slice(0, 34);
