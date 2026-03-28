@@ -52,6 +52,7 @@ interface GitHubInstallationToken {
   installationId: number;
   account: string;
   token: string;
+  isOrg: boolean;
 }
 
 async function getAllGitHubInstallationTokens(
@@ -77,6 +78,7 @@ async function getAllGitHubInstallationTokens(
   const installations = (await listResp.json()) as Array<{
     id: number;
     account: { login: string };
+    target_type: 'Organization' | 'User';
   }>;
 
   // Generate a token for each installation
@@ -98,6 +100,7 @@ async function getAllGitHubInstallationTokens(
       installationId: inst.id,
       account: inst.account.login,
       token: data.token,
+      isOrg: inst.target_type === 'Organization',
     });
   }
 
@@ -392,8 +395,9 @@ export async function runContainerAgent(
       const tokens = await getAllGitHubInstallationTokens(
         process.env.GITHUB_APP_PRIVATE_KEY,
       );
-      // Primary token (first installation) for gh CLI and MCP server
-      extraEnv.GITHUB_TOKEN = tokens[0].token;
+      // Primary token for gh CLI — prefer org over personal account
+      const orgToken = tokens.find((t) => t.isOrg) || tokens[0];
+      extraEnv.GITHUB_TOKEN = orgToken.token;
       // All tokens as JSON array for git credential setup inside container
       extraEnv.GITHUB_INSTALLATION_TOKENS = JSON.stringify(
         tokens.map((t) => ({ account: t.account, token: t.token })),
