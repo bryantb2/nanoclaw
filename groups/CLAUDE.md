@@ -218,7 +218,7 @@ You have access to the Krewtrack Google Workspace as fleet@krewtrack.com via a s
 
 ### Google Drive — drive-tool.cjs
 
-The `drive-tool.cjs` CLI provides read/write/list access to the Krewtrack Shared Drive.
+The `drive-tool.cjs` CLI provides read/write/list/search access to the Krewtrack Shared Drive. **Folders can be referenced by name or path** — no need for raw IDs.
 
 **Read a file:**
 ```bash
@@ -226,23 +226,36 @@ node /app/drive-tool.cjs read <FILE_ID>
 ```
 Returns file content as plain text (Google Docs exported as text; Sheets as CSV; other files as raw content). FILE_ID is the string from the Drive URL between `/d/` and `/edit`.
 
-**Write a file (default folder):**
+**Write a file to a named folder:**
 ```bash
-node /app/drive-tool.cjs write --folder <FLEET_OUTPUT_FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
+node /app/drive-tool.cjs write --folder "Fleet Output" --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
+node /app/drive-tool.cjs write --folder "Product Development/Software PRD" --title "Report" --content "..."
 ```
-Creates a new Google Doc. For large content, write to a temp file first.
+Creates a new Google Doc in the specified folder. Paths are resolved against the Krewtrack Shared Drive. For large content, write to a temp file first.
 
 **List files in a folder:**
 ```bash
-node /app/drive-tool.cjs list --folder <FOLDER_ID>
+node /app/drive-tool.cjs list --folder "Product Development"
+node /app/drive-tool.cjs list --folder 1O1LfyX_5fcP1f5Nx3zX48DFebwcZdf0-
 ```
-Returns a JSON array of `{ id, name, mimeType }` objects.
+Returns a JSON array of `{ id, name, mimeType }` objects. Accepts folder names or IDs.
+
+**Search across the entire Shared Drive:**
+```bash
+node /app/drive-tool.cjs search "product architecture"
+```
+Full-text search. Returns up to 20 matching files with IDs and names.
+
+**Resolve a folder name to ID (debugging):**
+```bash
+node /app/drive-tool.cjs resolve "Product Development/Software PRD"
+```
 
 ### Drive Write Policy
 
-- **Default write folder:** "Fleet Output" (`FLEET_OUTPUT_FOLDER_ID`). All routine writes (reports, summaries, analysis) go here without asking.
+- **Default write folder:** "Fleet Output". All routine writes (reports, summaries, analysis) go here without asking.
 - **Writing outside Fleet Output** (other folders, moving files, deleting files, creating folders elsewhere): **Ask the human first.** Example: "This task requires creating a doc in the Marketing folder — is that okay?"
-- **Reading is unrestricted.** You can read any file on the Shared Drive without asking.
+- **Reading and searching are unrestricted.** You can read any file and search the entire Shared Drive without asking.
 
 ### Gmail — Send & Read Email
 
