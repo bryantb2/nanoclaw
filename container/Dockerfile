@@ -52,8 +52,8 @@ RUN npm install
 # Copy source code
 COPY agent-runner/ ./
 
-# Copy drive-tool.js CLI for Google Drive/Docs integration
-COPY drive-tool.js /app/drive-tool.js
+# Copy drive-tool.cjs CLI for Google Drive/Docs integration (.cjs = CommonJS in ESM project)
+COPY drive-tool.cjs /app/drive-tool.cjs
 
 # Build TypeScript
 RUN npm run build

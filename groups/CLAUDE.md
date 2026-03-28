@@ -216,25 +216,25 @@ You have access to the Krewtrack Google Workspace as fleet@krewtrack.com via a s
 
 `GOOGLE_SERVICE_ACCOUNT_JSON` is injected from Infisical `/integrations` folder via entrypoint.sh multi-folder injection (`INFISICAL_FOLDERS="/clawhub,/integrations"`).
 
-### Google Drive — drive-tool.js
+### Google Drive — drive-tool.cjs
 
-The `drive-tool.js` CLI provides read/write/list access to the Krewtrack Shared Drive.
+The `drive-tool.cjs` CLI provides read/write/list access to the Krewtrack Shared Drive.
 
 **Read a file:**
 ```bash
-node /app/drive-tool.js read <FILE_ID>
+node /app/drive-tool.cjs read <FILE_ID>
 ```
 Returns file content as plain text (Google Docs exported as text; Sheets as CSV; other files as raw content). FILE_ID is the string from the Drive URL between `/d/` and `/edit`.
 
 **Write a file (default folder):**
 ```bash
-node /app/drive-tool.js write --folder <FLEET_OUTPUT_FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
+node /app/drive-tool.cjs write --folder <FLEET_OUTPUT_FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
 ```
 Creates a new Google Doc. For large content, write to a temp file first.
 
 **List files in a folder:**
 ```bash
-node /app/drive-tool.js list --folder <FOLDER_ID>
+node /app/drive-tool.cjs list --folder <FOLDER_ID>
 ```
 Returns a JSON array of `{ id, name, mimeType }` objects.
 
