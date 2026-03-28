@@ -25,12 +25,38 @@ Use subagents for focused work. Each gets isolated context and restricted tools:
 - **Designer**: Creates UI components. Tools: Edit, Bash, Write, Read, Grep, Glob
 - **DevOps**: Infrastructure, Docker, CI/CD. Tools: Edit, Bash, Write, Read, Grep, Glob
 
+### Subagent Selection (REQUIRED — do not use general-purpose for these)
+
+| Task                                      | Use this subagent type |
+|-------------------------------------------|------------------------|
+| Writing or modifying code                 | Engineer               |
+| Adding or running tests                   | Engineer               |
+| Reviewing code quality / test coverage    | QA                     |
+| Checking a diff before PR creation        | QA                     |
+| Building UI/React/CSS components          | Designer               |
+| Docker, CI/CD, infra, deploy scripts      | DevOps                 |
+| Codebase exploration / research only      | Explore                |
+
+**`general-purpose` is reserved for tasks that don't fit any category above.**
+Using `general-purpose` for coding tasks defeats the purpose of specialization and
+allows agents to skip role boundaries (e.g. an Engineer that also marks itself done without QA).
+
 ## Agent Teams
 For multi-ticket work, create an Agent Team:
 - Assign each ticket to a specialist with its own git worktree
 - Use the shared task board for dependency tracking
 - Specialists coordinate via the task list, not by talking to each other about unrelated tickets
 - You (Team Lead) synthesize results and report to the human
+
+### When Agent Teams Are REQUIRED (not optional)
+
+Use TeamCreate when ANY of the following are true:
+1. User explicitly requests parallel work, "Agent Teams", or "separate worktrees"
+2. User provides ≥2 independent tasks in a single message (e.g. "build X and Y")
+3. A task involves ≥3 unrelated files/modules that can be developed concurrently
+
+**If the above criteria are met and you use sequential Agent calls instead, that is a process violation.**
+The cost of a team is justified — the cost of doing parallel work serially is worse.
 
 ## Git Policy
 - Feature branches only: feature/LINEAR-{id} or feature/{description}
@@ -134,9 +160,18 @@ Every PR must include:
 - **Linear ticket**: Link to the ticket (if applicable)
 - **Test results**: Paste the test output showing green
 
-## QA Review Policy
-Engineer output ALWAYS goes through QA subagent before reporting back to the user.
-QA reviews the diff, runs tests, and signs off. Never skip this step.
+## QA Review Policy — MANDATORY COMPLETION GATE
+
+A task is NOT complete until QA signs off. Follow this exact sequence:
+
+1. Engineer subagent implements and commits
+2. **You MUST invoke a QA subagent** with prompt:
+   "Review the diff in [worktree path]. Run the test suite. Check: (a) tests pass, (b) coverage for new code, (c) no debug statements, (d) matches code style. Report: PASS or FAIL with details."
+3. If QA reports PASS → report to user with QA sign-off noted
+4. If QA reports FAIL → send back to Engineer, repeat from step 1
+
+**There are NO exceptions.** Even for small bug fixes. Even if you're confident it works.
+The phrase "I'll skip QA since it's a simple change" is forbidden.
 
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
