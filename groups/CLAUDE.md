@@ -210,36 +210,44 @@ The phrase "I'll skip QA since it's a simple change" is forbidden.
 - Maximum 3 improvement proposals per nightly review — quality over quantity
 
 
-## Google Drive Skill
+## Google Workspace Access
 
-You have access to Google Drive via the `drive-tool.js` CLI. This connects to the Krewtrack Shared Drive as fleet@krewtrack.com using a service account with domain-wide delegation.
+You have access to the Krewtrack Google Workspace as fleet@krewtrack.com via a service account with domain-wide delegation. This includes Drive, Docs, Sheets, Gmail, Calendar, and Cloud Storage.
 
 `GOOGLE_SERVICE_ACCOUNT_JSON` is injected from Infisical `/integrations` folder via entrypoint.sh multi-folder injection (`INFISICAL_FOLDERS="/clawhub,/integrations"`).
 
-### Read a file from Shared Drive
+### Google Drive — drive-tool.js
+
+The `drive-tool.js` CLI provides read/write/list access to the Krewtrack Shared Drive.
+
+**Read a file:**
 ```bash
 node /app/drive-tool.js read <FILE_ID>
 ```
-Returns file content as plain text (Google Docs are exported as text; Google Sheets as CSV; other files as their raw content). FILE_ID is the long string from the Google Drive URL between `/d/` and `/edit`.
+Returns file content as plain text (Google Docs exported as text; Sheets as CSV; other files as raw content). FILE_ID is the string from the Drive URL between `/d/` and `/edit`.
 
-### Write a summary to Shared Drive
+**Write a file (default folder):**
 ```bash
-node /app/drive-tool.js write --folder <FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
+node /app/drive-tool.js write --folder <FLEET_OUTPUT_FOLDER_ID> --title "Summary: <topic>" --content "$(cat /tmp/summary.txt)"
 ```
-Creates a new Google Doc with the given title and content inside the specified folder. Returns the URL of the newly created Google Doc (e.g., `https://docs.google.com/document/d/...`).
+Creates a new Google Doc. For large content, write to a temp file first.
 
-For large content, write to a temp file first, then pass with `--content "$(cat /tmp/file.txt)"`.
-
-### List files in a Shared Drive folder
+**List files in a folder:**
 ```bash
 node /app/drive-tool.js list --folder <FOLDER_ID>
 ```
-Returns a JSON array of `{ id, name, mimeType }` objects for all non-trashed files in the folder.
+Returns a JSON array of `{ id, name, mimeType }` objects.
+
+### Drive Write Policy
+
+- **Default write folder:** "Fleet Output" (`FLEET_OUTPUT_FOLDER_ID`). All routine writes (reports, summaries, analysis) go here without asking.
+- **Writing outside Fleet Output** (other folders, moving files, deleting files, creating folders elsewhere): **Ask the human first.** Example: "This task requires creating a doc in the Marketing folder — is that okay?"
+- **Reading is unrestricted.** You can read any file on the Shared Drive without asking.
 
 ### Tips
 - File IDs are in Google Drive URLs: `https://docs.google.com/document/d/FILE_ID_HERE/edit`
 - Folder IDs are in Drive URLs: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
-- If you receive `unauthorized_client`, domain-wide delegation may still be propagating (up to 24h). Wait a few minutes and retry.
+- If you receive `unauthorized_client`, domain-wide delegation may still be propagating (up to 24h). Wait and retry.
 
 ## MANDATORY: File Delivery Protocol
 ALWAYS follow this when creating ANY output file (reports, documents, analysis, research):
