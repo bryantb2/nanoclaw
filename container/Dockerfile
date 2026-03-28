@@ -70,8 +70,18 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Move real gh binary so entrypoint can install a wrapper as /usr/bin/gh.
+# This runs as root (before USER node) so it has write access to /usr/bin/.
+# The wrapper script is written at runtime by entrypoint.sh with token data.
+RUN mv /usr/bin/gh /usr/bin/gh.real 2>/dev/null || true
+
+# Placeholder gh wrapper — replaced at runtime by entrypoint.sh with token routing.
+# This ensures 'gh' is callable even if GITHUB_INSTALLATION_TOKENS is not set.
+RUN printf '#!/bin/bash\nexec /usr/bin/gh.real "$@"\n' > /usr/bin/gh && chmod +x /usr/bin/gh
+
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace && chmod 777 /home/node
+# Also make /usr/bin/gh writable by node so entrypoint can replace the wrapper
+RUN chown -R node:node /workspace && chmod 777 /home/node && chown node:node /usr/bin/gh
 
 # Set global git identity for agent commits
 RUN git config --global user.name "Agent Fleet" \

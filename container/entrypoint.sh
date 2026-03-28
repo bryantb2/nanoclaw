@@ -4,8 +4,9 @@ set -e
 # --- Git + gh credential setup for multi-installation GitHub App ---
 # GITHUB_INSTALLATION_TOKENS is a JSON array: [{"account":"org","token":"ghs_..."},...]
 # Sets up:
-#   1. A git credential helper that routes by repo owner (for git push)
-#   2. A gh CLI wrapper that detects repo owner and sets GH_TOKEN accordingly
+#   1. A shared token map file (sourced by both helpers)
+#   2. A git credential helper that routes by repo owner
+#   3. A gh CLI wrapper at /usr/bin/gh that sets GH_TOKEN per repo owner
 if [ -n "$GITHUB_INSTALLATION_TOKENS" ]; then
 
   # --- Shared: write token map as a sourceable file ---
@@ -47,27 +48,29 @@ HELPEREOF
   git config --global credential.helper "$HELPER"
   git config --global credential.useHttpPath true
 
-  # --- gh CLI wrapper: detects repo owner from args/cwd, sets GH_TOKEN ---
-  # Move real gh out of the way first, then write wrapper in its place.
-  GH_REAL_BIN="/usr/bin/gh.real"
-  mv "$(which gh)" "$GH_REAL_BIN" 2>/dev/null || true
-  GH_WRAPPER="$HOME/.gh-wrapper.sh"
-  cat > "$GH_WRAPPER" << 'WRAPPEREOF'
+  # --- gh CLI wrapper: overwrite /usr/bin/gh (made writable by Dockerfile) ---
+  cat > /usr/bin/gh << 'GHEOF'
 #!/bin/bash
 source "$HOME/.github-token-map.sh"
 
-# Try to detect repo owner from:
-#   1. Explicit owner/repo in args (gh repo clone owner/repo, gh pr create -R owner/repo)
-#   2. Git remote origin of current directory
 OWNER=""
 
-# Check args for owner/repo patterns or -R flag
+# Check -R / --repo flag
 ARGS="$*"
-# -R owner/repo flag
 if [[ "$ARGS" =~ -R[[:space:]]+([^/[:space:]]+)/ ]]; then
   OWNER="${BASH_REMATCH[1]}"
 elif [[ "$ARGS" =~ --repo[[:space:]]+([^/[:space:]]+)/ ]]; then
   OWNER="${BASH_REMATCH[1]}"
+fi
+
+# Check positional args for owner/repo pattern (e.g., gh repo view owner/repo)
+if [ -z "$OWNER" ]; then
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$ ]]; then
+      OWNER="${BASH_REMATCH[1]}"
+      break
+    fi
+  done
 fi
 
 # Fall back to git remote origin in cwd
@@ -85,14 +88,10 @@ if [ -n "$OWNER" ] && [ -n "${GITHUB_TOKENS[$OWNER]}" ]; then
 fi
 
 exec /usr/bin/gh.real "$@"
-WRAPPEREOF
-  chmod +x "$GH_WRAPPER"
-
-  # Install wrapper as /usr/bin/gh (real binary already moved above)
-  cp "$GH_WRAPPER" /usr/bin/gh
+GHEOF
   chmod +x /usr/bin/gh
 
-  # Unset GITHUB_TOKEN so gh uses GH_TOKEN from wrapper (GH_TOKEN takes precedence)
+  # Unset GITHUB_TOKEN so gh uses GH_TOKEN from wrapper
   unset GITHUB_TOKEN
 fi
 
