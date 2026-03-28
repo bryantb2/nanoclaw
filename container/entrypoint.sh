@@ -5,21 +5,23 @@ set -e
 # GITHUB_INSTALLATION_TOKENS is a JSON array: [{"account":"org","token":"ghs_..."},...]
 # Sets up:
 #   1. A git credential helper that routes by repo owner (for git push)
-#   2. Per-account GITHUB_TOKEN_<ACCOUNT> env vars (for gh CLI per-repo)
-#   3. GITHUB_TOKEN stays as-is (org token, primary for gh CLI)
+#   2. A gh CLI wrapper that detects repo owner and sets GH_TOKEN accordingly
 if [ -n "$GITHUB_INSTALLATION_TOKENS" ]; then
+
+  # --- Shared: write token map as a sourceable file ---
+  TOKEN_MAP="$HOME/.github-token-map.sh"
+  echo "$GITHUB_INSTALLATION_TOKENS" | node -e "
+    const tokens = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    console.log('declare -A GITHUB_TOKENS');
+    tokens.forEach(t => console.log('GITHUB_TOKENS[\"' + t.account.toLowerCase() + '\"]=\"' + t.token + '\"'));
+  " > "$TOKEN_MAP"
 
   # --- Git credential helper: routes token by repo owner ---
   HELPER="$HOME/.git-credential-helper.sh"
   cat > "$HELPER" << 'HELPEREOF'
 #!/bin/bash
 if [ "$1" != "get" ]; then exit 0; fi
-
-declare -A TOKENS
-eval "$(echo "$GITHUB_INSTALLATION_TOKENS" | node -e "
-  const tokens = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  tokens.forEach(t => console.log('TOKENS[\"' + t.account.toLowerCase() + '\"]=\"' + t.token + '\"'));
-")"
+source "$HOME/.github-token-map.sh"
 
 REPO_PATH=""
 while IFS='=' read -r key value; do
@@ -28,13 +30,11 @@ while IFS='=' read -r key value; do
 done
 
 OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
+TOKEN="${GITHUB_TOKENS[$OWNER]}"
 
-TOKEN="${TOKENS[$OWNER]}"
+# Fallback to first token
 if [ -z "$TOKEN" ]; then
-  TOKEN=$(echo "$GITHUB_INSTALLATION_TOKENS" | node -e "
-    const t = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-    console.log(t[0].token);
-  ")
+  for k in "${!GITHUB_TOKENS[@]}"; do TOKEN="${GITHUB_TOKENS[$k]}"; break; done
 fi
 
 echo "protocol=https"
@@ -44,20 +44,55 @@ echo "password=$TOKEN"
 echo ""
 HELPEREOF
   chmod +x "$HELPER"
-
   git config --global credential.helper "$HELPER"
   git config --global credential.useHttpPath true
 
-  # --- Export per-account tokens as env vars ---
-  # e.g., GITHUB_TOKEN_BRYANTB2=ghs_xxx, GITHUB_TOKEN_KREWTRACK=ghs_yyy
-  # Agent can use: GH_TOKEN=$GITHUB_TOKEN_BRYANTB2 gh pr create ...
-  eval "$(echo "$GITHUB_INSTALLATION_TOKENS" | node -e "
-    const tokens = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-    tokens.forEach(t => {
-      const name = 'GITHUB_TOKEN_' + t.account.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-      console.log('export ' + name + '=\"' + t.token + '\"');
-    });
-  ")"
+  # --- gh CLI wrapper: detects repo owner from args/cwd, sets GH_TOKEN ---
+  GH_REAL=$(which gh)
+  GH_WRAPPER="$HOME/.gh-wrapper.sh"
+  cat > "$GH_WRAPPER" << WRAPPEREOF
+#!/bin/bash
+source "\$HOME/.github-token-map.sh"
+
+# Try to detect repo owner from:
+#   1. Explicit owner/repo in args (gh repo clone owner/repo, gh pr create -R owner/repo)
+#   2. Git remote origin of current directory
+OWNER=""
+
+# Check args for owner/repo patterns or -R flag
+ARGS="\$*"
+# -R owner/repo flag
+if [[ "\$ARGS" =~ -R[[:space:]]+([^/[:space:]]+)/ ]]; then
+  OWNER="\${BASH_REMATCH[1]}"
+elif [[ "\$ARGS" =~ --repo[[:space:]]+([^/[:space:]]+)/ ]]; then
+  OWNER="\${BASH_REMATCH[1]}"
+fi
+
+# Fall back to git remote origin in cwd
+if [ -z "\$OWNER" ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  REMOTE_URL=\$(git remote get-url origin 2>/dev/null || true)
+  if [[ "\$REMOTE_URL" =~ github\.com[:/]([^/]+)/ ]]; then
+    OWNER="\${BASH_REMATCH[1]}"
+  fi
+fi
+
+OWNER=\$(echo "\$OWNER" | tr '[:upper:]' '[:lower:]')
+
+if [ -n "\$OWNER" ] && [ -n "\${GITHUB_TOKENS[\$OWNER]}" ]; then
+  export GH_TOKEN="\${GITHUB_TOKENS[\$OWNER]}"
+fi
+
+exec "$GH_REAL" "\$@"
+WRAPPEREOF
+  chmod +x "$GH_WRAPPER"
+
+  # Put wrapper ahead of real gh in PATH
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$GH_WRAPPER" "$HOME/.local/bin/gh"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # Unset GITHUB_TOKEN so gh uses GH_TOKEN from wrapper (GH_TOKEN takes precedence)
+  unset GITHUB_TOKEN
 fi
 
 # --- Build TypeScript agent runner ---

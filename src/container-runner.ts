@@ -395,10 +395,8 @@ export async function runContainerAgent(
       const tokens = await getAllGitHubInstallationTokens(
         process.env.GITHUB_APP_PRIVATE_KEY,
       );
-      // Primary token for gh CLI — prefer org over personal account
-      const orgToken = tokens.find((t) => t.isOrg) || tokens[0];
-      extraEnv.GITHUB_TOKEN = orgToken.token;
-      // All tokens as JSON array for git credential setup inside container
+      // All tokens as JSON array — entrypoint.sh sets up credential helper
+      // and gh wrapper. No GITHUB_TOKEN needed (wrapper sets GH_TOKEN per-repo).
       extraEnv.GITHUB_INSTALLATION_TOKENS = JSON.stringify(
         tokens.map((t) => ({ account: t.account, token: t.token })),
       );
