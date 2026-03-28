@@ -390,6 +390,9 @@ export async function runContainerAgent(
     extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.LINEAR_API_KEY)
     extraEnv.LINEAR_API_KEY = process.env.LINEAR_API_KEY;
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
+    extraEnv.GOOGLE_SERVICE_ACCOUNT_JSON =
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (process.env.GITHUB_APP_PRIVATE_KEY) {
     try {
       const tokens = await getAllGitHubInstallationTokens(
