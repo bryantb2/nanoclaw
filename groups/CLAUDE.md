@@ -244,10 +244,105 @@ Returns a JSON array of `{ id, name, mimeType }` objects.
 - **Writing outside Fleet Output** (other folders, moving files, deleting files, creating folders elsewhere): **Ask the human first.** Example: "This task requires creating a doc in the Marketing folder — is that okay?"
 - **Reading is unrestricted.** You can read any file on the Shared Drive without asking.
 
+### Gmail — Send & Read Email
+
+You can send and read email as fleet@krewtrack.com using the googleapis library.
+
+**Auth pattern (reuse for all Workspace APIs):**
+```javascript
+const { google } = require('googleapis');
+const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+const auth = new google.auth.JWT({
+  email: key.client_email,
+  key: key.private_key,
+  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+  subject: 'fleet@krewtrack.com',
+});
+const gmail = google.gmail({ version: 'v1', auth });
+```
+
+**Send an email:**
+```javascript
+const raw = Buffer.from(
+  `To: recipient@example.com\r\nSubject: Subject here\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBody text here`
+).toString('base64url');
+await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+```
+
+**Send with attachment (PDF, etc.):**
+```javascript
+const boundary = 'boundary_fleet';
+const attachment = fs.readFileSync('/tmp/report.pdf').toString('base64');
+const raw = Buffer.from(
+  `To: recipient@example.com\r\nSubject: Subject\r\nMIME-Version: 1.0\r\n` +
+  `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
+  `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached.\r\n` +
+  `--${boundary}\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n` +
+  `Content-Disposition: attachment; filename="report.pdf"\r\n\r\n${attachment}\r\n--${boundary}--`
+).toString('base64url');
+await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+```
+
+**Read recent emails:**
+```javascript
+const res = await gmail.users.messages.list({ userId: 'me', maxResults: 10 });
+const msg = await gmail.users.messages.get({ userId: 'me', id: res.data.messages[0].id });
+```
+
+### Google Sheets — Read & Write
+
+```javascript
+const sheets = google.sheets({ version: 'v4', auth }); // same auth pattern, scope: spreadsheets
+// Read
+const res = await sheets.spreadsheets.values.get({ spreadsheetId: 'ID', range: 'Sheet1!A1:D10' });
+// Write
+await sheets.spreadsheets.values.update({
+  spreadsheetId: 'ID', range: 'Sheet1!A1', valueInputOption: 'RAW',
+  requestBody: { values: [['col1', 'col2'], ['val1', 'val2']] },
+});
+```
+
+### Google Calendar — Read & Create Events
+
+```javascript
+const calendar = google.calendar({ version: 'v3', auth }); // scope: calendar
+// List upcoming events
+const res = await calendar.events.list({ calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 10 });
+// Create event
+await calendar.events.insert({ calendarId: 'primary', requestBody: {
+  summary: 'Meeting', start: { dateTime: '2026-03-29T10:00:00-06:00' }, end: { dateTime: '2026-03-29T11:00:00-06:00' },
+  attendees: [{ email: 'blake@krewtrack.com' }],
+}});
+```
+
+### Workspace API Scopes Available
+
+| API | Scope | What you can do |
+|-----|-------|-----------------|
+| Drive | `auth/drive` | Read/write/list files on Shared Drive |
+| Docs | `auth/documents` | Create/edit Google Docs |
+| Sheets | `auth/spreadsheets` | Read/write spreadsheet data |
+| Gmail | `auth/gmail.modify` | Send, read, label emails (not delete) |
+| Calendar | `auth/calendar` | Read/create/update events |
+| Cloud Storage | `auth/devstorage.read_write` | Read/write GCS buckets |
+| Drive Labels | `auth/drive.labels` | Manage Drive file labels |
+
+All APIs use the same auth pattern — just change the scope and service constructor. Write inline Node.js scripts using `node -e` or save to `/tmp/` and run.
+
+### Workspace Team Directory
+
+| Name | Email |
+|------|-------|
+| Blake | blake@krewtrack.com |
+| Fleet (you) | fleet@krewtrack.com |
+
+When a user says "email Joe" or "send to Blake", look up their email here. If the name isn't listed, ask for the email address.
+
 ### Tips
 - File IDs are in Google Drive URLs: `https://docs.google.com/document/d/FILE_ID_HERE/edit`
 - Folder IDs are in Drive URLs: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
 - If you receive `unauthorized_client`, domain-wide delegation may still be propagating (up to 24h). Wait and retry.
+- All Workspace API calls impersonate `fleet@krewtrack.com` via the `subject` field in JWT auth.
 
 ## MANDATORY: File Delivery Protocol
 ALWAYS follow this when creating ANY output file (reports, documents, analysis, research):
