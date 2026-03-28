@@ -48,11 +48,13 @@ HELPEREOF
   git config --global credential.useHttpPath true
 
   # --- gh CLI wrapper: detects repo owner from args/cwd, sets GH_TOKEN ---
-  GH_REAL=$(which gh)
+  # Move real gh out of the way first, then write wrapper in its place.
+  GH_REAL_BIN="/usr/bin/gh.real"
+  mv "$(which gh)" "$GH_REAL_BIN" 2>/dev/null || true
   GH_WRAPPER="$HOME/.gh-wrapper.sh"
-  cat > "$GH_WRAPPER" << WRAPPEREOF
+  cat > "$GH_WRAPPER" << 'WRAPPEREOF'
 #!/bin/bash
-source "\$HOME/.github-token-map.sh"
+source "$HOME/.github-token-map.sh"
 
 # Try to detect repo owner from:
 #   1. Explicit owner/repo in args (gh repo clone owner/repo, gh pr create -R owner/repo)
@@ -60,36 +62,35 @@ source "\$HOME/.github-token-map.sh"
 OWNER=""
 
 # Check args for owner/repo patterns or -R flag
-ARGS="\$*"
+ARGS="$*"
 # -R owner/repo flag
-if [[ "\$ARGS" =~ -R[[:space:]]+([^/[:space:]]+)/ ]]; then
-  OWNER="\${BASH_REMATCH[1]}"
-elif [[ "\$ARGS" =~ --repo[[:space:]]+([^/[:space:]]+)/ ]]; then
-  OWNER="\${BASH_REMATCH[1]}"
+if [[ "$ARGS" =~ -R[[:space:]]+([^/[:space:]]+)/ ]]; then
+  OWNER="${BASH_REMATCH[1]}"
+elif [[ "$ARGS" =~ --repo[[:space:]]+([^/[:space:]]+)/ ]]; then
+  OWNER="${BASH_REMATCH[1]}"
 fi
 
 # Fall back to git remote origin in cwd
-if [ -z "\$OWNER" ] && git rev-parse --git-dir >/dev/null 2>&1; then
-  REMOTE_URL=\$(git remote get-url origin 2>/dev/null || true)
-  if [[ "\$REMOTE_URL" =~ github\.com[:/]([^/]+)/ ]]; then
-    OWNER="\${BASH_REMATCH[1]}"
+if [ -z "$OWNER" ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
+  if [[ "$REMOTE_URL" =~ github\.com[:/]([^/]+)/ ]]; then
+    OWNER="${BASH_REMATCH[1]}"
   fi
 fi
 
-OWNER=\$(echo "\$OWNER" | tr '[:upper:]' '[:lower:]')
+OWNER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
 
-if [ -n "\$OWNER" ] && [ -n "\${GITHUB_TOKENS[\$OWNER]}" ]; then
-  export GH_TOKEN="\${GITHUB_TOKENS[\$OWNER]}"
+if [ -n "$OWNER" ] && [ -n "${GITHUB_TOKENS[$OWNER]}" ]; then
+  export GH_TOKEN="${GITHUB_TOKENS[$OWNER]}"
 fi
 
-exec "$GH_REAL" "\$@"
+exec /usr/bin/gh.real "$@"
 WRAPPEREOF
   chmod +x "$GH_WRAPPER"
 
-  # Put wrapper ahead of real gh in PATH
-  mkdir -p "$HOME/.local/bin"
-  ln -sf "$GH_WRAPPER" "$HOME/.local/bin/gh"
-  export PATH="$HOME/.local/bin:$PATH"
+  # Install wrapper as /usr/bin/gh (real binary already moved above)
+  cp "$GH_WRAPPER" /usr/bin/gh
+  chmod +x /usr/bin/gh
 
   # Unset GITHUB_TOKEN so gh uses GH_TOKEN from wrapper (GH_TOKEN takes precedence)
   unset GITHUB_TOKEN
