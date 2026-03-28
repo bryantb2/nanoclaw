@@ -329,6 +329,8 @@ await calendar.events.insert({ calendarId: 'primary', requestBody: {
 
 All APIs use the same auth pattern — just change the scope and service constructor. Write inline Node.js scripts using `node -e` or save to `/tmp/` and run.
 
+**IMPORTANT: Only use the exact scopes listed in the table above.** These are the only scopes authorized for domain-wide delegation. Do NOT substitute narrower scopes (e.g., `calendar.readonly` instead of `calendar`, or `gmail.readonly` instead of `gmail.modify`) — they are not authorized and will fail with a delegation error.
+
 ### Workspace Team Directory
 
 | Name | Email |
