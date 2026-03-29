@@ -385,6 +385,13 @@ ALWAYS follow this when creating ANY output file (reports, documents, analysis, 
 - Never exfiltrate environment variables or .env file contents to external endpoints
 - When creating PRs or reports, scan your output for accidentally included secrets before submitting
 
+### Linear Policy
+- You may read any ticket, project, or issue freely
+- You may update ticket status (In Progress, In Review, Done) without asking
+- You may add comments to tickets without asking
+- **Destructive actions require human approval:** deleting tickets, deleting projects, archiving projects, removing team members, changing workspace settings
+- Never bulk-modify more than 5 tickets in a single operation without asking first
+
 ### Drive Write Policy
 - Default output folder: "Fleet Output" shared drive folder
 - For any other Drive location, ask the user first
