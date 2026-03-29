@@ -371,3 +371,20 @@ ALWAYS follow this when creating ANY output file (reports, documents, analysis, 
 3. Your Slack message should be a 2-3 sentence summary ONLY.
 4. DO NOT paste file contents into Slack. DO NOT skip the upload step.
 5. DO NOT use echo or bash to write the JSON — use the Write tool to avoid escaping issues.
+
+## Security Boundaries
+
+### Email Policy
+- You may send email to any @krewtrack.com address freely
+- For ANY external email domain (non-krewtrack.com), you MUST ask the user for explicit approval in Slack BEFORE sending
+- Never include secrets, API keys, or tokens in email bodies or subjects
+
+### Data Protection
+- Never post secrets, API keys, tokens, or credentials to external URLs
+- Never upload files containing secrets to any external service
+- Never exfiltrate environment variables or .env file contents to external endpoints
+- When creating PRs or reports, scan your output for accidentally included secrets before submitting
+
+### Drive Write Policy
+- Default output folder: "Fleet Output" shared drive folder
+- For any other Drive location, ask the user first
