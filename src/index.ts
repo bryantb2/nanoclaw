@@ -5,6 +5,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  DEFAULT_MAX_BUDGET_USD,
   IDLE_TIMEOUT,
   ONECLI_URL,
   POLL_INTERVAL,
@@ -399,6 +400,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         threadTs,
+        maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -423,12 +425,23 @@ async function runAgent(
         // Warn user via Slack thread
         const channel = findChannel(channels, chatJid);
         if (channel && threadTs) {
-          await channel.sendMessage(chatJid, 'Session expired, starting fresh', {
-            threadTs,
-          });
+          await channel.sendMessage(
+            chatJid,
+            'Session expired, starting fresh',
+            {
+              threadTs,
+            },
+          );
         }
         // Retry with fresh session (no sessionId)
-        return runAgent(group, prompt, chatJid, onOutput, threadTs, retryCount + 1);
+        return runAgent(
+          group,
+          prompt,
+          chatJid,
+          onOutput,
+          threadTs,
+          retryCount + 1,
+        );
       }
 
       logger.error(

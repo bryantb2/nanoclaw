@@ -95,6 +95,53 @@ GHEOF
   unset GITHUB_TOKEN
 fi
 
+# --- Secret scanning pre-commit hook (SEC-17, ASEC-03) ---
+HOOKS_DIR="$HOME/.git-hooks"
+mkdir -p "$HOOKS_DIR"
+cat > "$HOOKS_DIR/pre-commit" << 'HOOKEOF'
+#!/bin/bash
+# Block commits containing credential patterns
+# Patterns: API keys, tokens, PEM blocks, base64 JSON keys
+
+PATTERNS=(
+  'sk-ant-api[0-9]'
+  'sk-[a-zA-Z0-9]{20,}'
+  'ghp_[A-Za-z0-9]{36}'
+  'ghs_[A-Za-z0-9]{36}'
+  'ghu_[A-Za-z0-9]{36}'
+  'lin_api_[A-Za-z0-9]+'
+  'xoxb-[0-9]{11,}'
+  'xoxp-[0-9]{11,}'
+  'AKIA[A-Z0-9]{16}'
+  '-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+  '-----BEGIN CERTIFICATE-----'
+  'eyJ[A-Za-z0-9+/=]{50,}'
+)
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then exit 0; fi
+
+FOUND=0
+for pattern in "${PATTERNS[@]}"; do
+  MATCHES=$(git diff --cached -U0 -- $STAGED | grep -E "^\+" | grep -v "^+++" | grep -E "$pattern" || true)
+  if [ -n "$MATCHES" ]; then
+    echo "ERROR: Potential secret found matching pattern: $pattern"
+    echo "$MATCHES" | head -5
+    echo ""
+    FOUND=1
+  fi
+done
+
+if [ "$FOUND" -eq 1 ]; then
+  echo "BLOCKED: Remove secrets from staged changes before committing."
+  echo "If this is a false positive, use: git commit --no-verify"
+  exit 1
+fi
+exit 0
+HOOKEOF
+chmod +x "$HOOKS_DIR/pre-commit"
+git config --global core.hooksPath "$HOOKS_DIR"
+
 # --- Build TypeScript agent runner ---
 cd /app && npx tsc --outDir /tmp/dist 2>&1 >&2
 ln -s /app/node_modules /tmp/dist/node_modules

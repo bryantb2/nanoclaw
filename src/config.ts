@@ -71,3 +71,10 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Default per-run Anthropic API budget cap ($5 USD).
+// Agents will refuse to continue if this is exceeded mid-run.
+// Override with DEFAULT_MAX_BUDGET_USD env var.
+export const DEFAULT_MAX_BUDGET_USD = parseFloat(
+  process.env.DEFAULT_MAX_BUDGET_USD || '5',
+);

@@ -313,8 +313,9 @@ async function buildContainerArgs(
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Memory limits per container
+  // Memory and CPU limits per container
   args.push('--memory=3g', '--memory-swap=3g');
+  args.push('--cpus=2');
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
