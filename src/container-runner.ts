@@ -523,7 +523,16 @@ export async function runContainerAgent(
               newSessionId = parsed.newSessionId;
             }
             if (parsed.totalCostUsd && parsed.totalCostUsd > 0) {
-              accumulatedCostUsd += parsed.totalCostUsd;
+              // SDK total_cost_usd is cumulative within a query() call.
+              // Agent teams may produce multiple results per call, each
+              // carrying the running total. Track the max per query.
+              currentQueryMaxCost = Math.max(currentQueryMaxCost, parsed.totalCostUsd);
+            }
+            // Session-update marker (null result, no cost) = query() boundary.
+            // Flush the current query's cost and reset for the next query.
+            if (parsed.result === null && !parsed.totalCostUsd) {
+              accumulatedCostUsd += currentQueryMaxCost;
+              currentQueryMaxCost = 0;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
@@ -566,6 +575,7 @@ export async function runContainerAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
     let accumulatedCostUsd = 0;
+    let currentQueryMaxCost = 0;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -630,11 +640,15 @@ export async function runContainerAgent(
                 deleteInFlightTask(inFlightId);
               } catch {}
             }
+            // Flush any remaining query cost before resolving
+            accumulatedCostUsd += currentQueryMaxCost;
+            currentQueryMaxCost = 0;
             resolve({
               status: 'success',
               result: null,
               newSessionId,
-              totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+              totalCostUsd:
+                accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
             });
           });
           return;
@@ -754,11 +768,15 @@ export async function runContainerAgent(
               deleteInFlightTask(inFlightId);
             } catch {}
           }
+          // Flush any remaining query cost before resolving
+          accumulatedCostUsd += currentQueryMaxCost;
+          currentQueryMaxCost = 0;
           resolve({
             status: 'success',
             result: null,
             newSessionId,
-            totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+            totalCostUsd:
+              accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
           });
         });
         return;
