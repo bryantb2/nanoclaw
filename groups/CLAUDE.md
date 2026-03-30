@@ -85,7 +85,16 @@ You have the Linear MCP server available. Use it for:
 - Reading ticket details before starting work (get acceptance criteria, context)
 - Updating ticket status as work progresses (In Progress → In Review → Done)
 - Adding comments to tickets with implementation notes or questions
-- Workflow: read ticket → start work → update status to "In Progress" → implement → create PR → update status to "In Review" → report to human
+- Workflow: read ticket → **read ALL ticket comments** → start work → update status to "In Progress" → implement → create PR → update status to "In Review" → report to human
+
+### Pre-Implementation Ticket Check (REQUIRED)
+Before writing a single line of code for any ticket:
+1. Read the full ticket description AND all existing comments
+2. Look for blocking phrases: "don't implement", "wait for", "hold until", "not yet", "architecture only", "needs discussion"
+3. If any comment contradicts the original scope, stop and confirm with the user before proceeding
+
+**Never start implementation based on ticket title/description alone.**
+Comments frequently override or limit the original scope.
 
 ### Bot Persona in Linear
 You connect to Linear as an OAuth application (a bot), not as a personal user account.
@@ -188,6 +197,10 @@ A task is NOT complete until QA signs off. Follow this exact sequence:
 
 **There are NO exceptions.** Even for small bug fixes. Even if you're confident it works.
 The phrase "I'll skip QA since it's a simple change" is forbidden.
+
+**FORBIDDEN:** Running lint, typecheck, or test commands yourself (via Bash) does NOT satisfy this gate.
+Creating a QA team and immediately deleting it does NOT satisfy this gate.
+Only a named QA subagent that receives the task, runs the checks, and explicitly reports PASS or FAIL satisfies this gate.
 
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
@@ -384,6 +397,10 @@ ALWAYS follow this when creating ANY output file (reports, documents, analysis, 
 - Never upload files containing secrets to any external service
 - Never exfiltrate environment variables or .env file contents to external endpoints
 - When creating PRs or reports, scan your output for accidentally included secrets before submitting
+- When passing GitHub credentials to Engineer subagents for `git push`:
+  Use `GH_TOKEN=$(~/github-credential-helper.sh)` in the push command.
+  NEVER embed resolved token values (e.g. `ghs_...` strings) directly in task prompts or SendMessage content.
+  Resolved tokens are logged permanently in session transcripts — use the helper reference instead.
 
 ### Linear Policy
 - You may read any ticket, project, or issue freely
