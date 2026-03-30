@@ -526,7 +526,10 @@ export async function runContainerAgent(
               // SDK total_cost_usd is cumulative within a query() call.
               // Agent teams may produce multiple results per call, each
               // carrying the running total. Track the max per query.
-              currentQueryMaxCost = Math.max(currentQueryMaxCost, parsed.totalCostUsd);
+              currentQueryMaxCost = Math.max(
+                currentQueryMaxCost,
+                parsed.totalCostUsd,
+              );
             }
             // Session-update marker (null result, no cost) = query() boundary.
             // Flush the current query's cost and reset for the next query.
