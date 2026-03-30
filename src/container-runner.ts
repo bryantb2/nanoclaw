@@ -522,6 +522,9 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
+            if (parsed.totalCostUsd && parsed.totalCostUsd > 0) {
+              accumulatedCostUsd += parsed.totalCostUsd;
+            }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
@@ -562,6 +565,7 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
+    let accumulatedCostUsd = 0;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -630,6 +634,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId,
+              totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
             });
           });
           return;
@@ -753,6 +758,7 @@ export async function runContainerAgent(
             status: 'success',
             result: null,
             newSessionId,
+            totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
           });
         });
         return;
