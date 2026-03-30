@@ -751,10 +751,15 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
+        // Flush remaining query cost even on error — API tokens were still consumed
+        accumulatedCostUsd += currentQueryMaxCost;
+        currentQueryMaxCost = 0;
         resolve({
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+          totalCostUsd:
+            accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
         });
         return;
       }
