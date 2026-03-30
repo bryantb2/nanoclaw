@@ -448,10 +448,10 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return 'error';
+      // Still log cost on error — a killed/failed container still consumed API tokens
     }
 
-    // Track cost if reported
+    // Track cost if reported (runs for both success and error)
     logger.debug(
       { group: group.name, totalCostUsd: output.totalCostUsd ?? null },
       'Agent run cost data',
@@ -484,7 +484,7 @@ async function runAgent(
       }
     }
 
-    return 'success';
+    return output.status === 'error' ? 'error' : 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
