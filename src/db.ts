@@ -189,6 +189,22 @@ export function _initTestDatabase(): void {
   createSchema(db);
 }
 
+/** @internal - for tests only. Returns the current database instance. */
+export function _getDb(): Database.Database {
+  return db;
+}
+
+/**
+ * @internal - for tests only. Opens a file-based database at the given path,
+ * without any pragmas. Use this to test the busy_timeout pragma contract:
+ * this helper intentionally mirrors the pre-pragma state of initDatabase().
+ */
+export function _initFileDatabaseForTest(dbPath: string): void {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  db = new Database(dbPath);
+  createSchema(db);
+}
+
 /**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
