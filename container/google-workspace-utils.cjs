@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 
 // google-workspace-utils.cjs — Shared utilities for Google Workspace CLI tools
