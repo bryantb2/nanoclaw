@@ -17,50 +17,15 @@
 // Auth: GOOGLE_SERVICE_ACCOUNT_JSON env var (JSON key from GCP service account with
 // domain-wide delegation). Injected via entrypoint.sh from Infisical /integrations.
 
-const { google } = require('googleapis');
+const { google, getAuth, parseFlags, handleApiError } = require('./google-workspace-utils.cjs');
+
+const DRIVE_SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/documents',
+];
 
 // Krewtrack Shared Drive ID (from drive URL)
 const SHARED_DRIVE_ID = '0AK8IOyoGnf6kUk9PVA';
-
-// ---------------------------------------------------------------------------
-// Auth setup
-// ---------------------------------------------------------------------------
-
-function getAuth() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
-    console.error(
-      'Error: GOOGLE_SERVICE_ACCOUNT_JSON env var is not set.\n' +
-      'This secret must be injected from Infisical /integrations folder.\n' +
-      'Ensure entrypoint.sh is configured with INFISICAL_FOLDERS="/clawhub,/integrations".'
-    );
-    process.exit(1);
-  }
-
-  let key;
-  try {
-    key = JSON.parse(raw);
-  } catch (e) {
-    console.error(
-      'Error: GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON.\n' +
-      'If the private key contains literal \\n characters, ensure the value is stored\n' +
-      'as a compact single-line JSON string in Infisical (not multi-line).'
-    );
-    process.exit(1);
-  }
-
-  const auth = new google.auth.JWT({
-    email: key.client_email,
-    key: key.private_key,
-    scopes: [
-      'https://www.googleapis.com/auth/drive',
-      'https://www.googleapis.com/auth/documents',
-    ],
-    subject: 'fleet@krewtrack.com', // domain-wide delegation impersonation
-  });
-
-  return auth;
-}
 
 // ---------------------------------------------------------------------------
 // Folder resolution: name/path → ID
@@ -137,7 +102,7 @@ async function cmdRead(fileId) {
     process.exit(1);
   }
 
-  const auth = getAuth();
+  const auth = getAuth(DRIVE_SCOPES);
   const drive = google.drive({ version: 'v3', auth });
 
   // Get file metadata to determine mimeType
@@ -190,7 +155,7 @@ async function cmdWrite(args) {
     process.exit(1);
   }
 
-  const auth = getAuth();
+  const auth = getAuth(DRIVE_SCOPES);
   const drive = google.drive({ version: 'v3', auth });
   const docs = google.docs({ version: 'v1', auth });
 
@@ -256,7 +221,7 @@ async function cmdList(args) {
     process.exit(1);
   }
 
-  const auth = getAuth();
+  const auth = getAuth(DRIVE_SCOPES);
   const drive = google.drive({ version: 'v3', auth });
 
   // Resolve folder name to ID
@@ -287,7 +252,7 @@ async function cmdSearch(query) {
     process.exit(1);
   }
 
-  const auth = getAuth();
+  const auth = getAuth(DRIVE_SCOPES);
   const drive = google.drive({ version: 'v3', auth });
 
   let res;
@@ -318,45 +283,11 @@ async function cmdResolve(folderArg) {
     process.exit(1);
   }
 
-  const auth = getAuth();
+  const auth = getAuth(DRIVE_SCOPES);
   const drive = google.drive({ version: 'v3', auth });
 
   const folderId = await resolveFolder(drive, folderArg);
   console.log(folderId);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function parseFlags(args, keys) {
-  const result = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      if (keys.includes(key)) {
-        result[key] = args[i + 1] || '';
-        i++;
-      }
-    }
-  }
-  return result;
-}
-
-function handleApiError(err, context) {
-  const msg = err.message || String(err);
-  if (msg.includes('unauthorized_client')) {
-    console.error(
-      `Error [${context}]: unauthorized_client\n` +
-      'Hint: Domain-wide delegation changes can take up to 24 hours to propagate.\n' +
-      'Wait 5-15 minutes after adding delegation in Google Workspace Admin, then retry.\n' +
-      'Also verify: service account client_id is added under Security > API Controls > Domain-wide Delegation.'
-    );
-  } else {
-    console.error(`Error [${context}]: ${msg}`);
-  }
-  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------

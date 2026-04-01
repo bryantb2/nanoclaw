@@ -402,8 +402,8 @@ async function runAgent(
         threadTs,
         maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
       },
-      (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName, resetTimeout) =>
+        queue.registerProcess(chatJid, proc, containerName, group.folder, resetTimeout),
       wrappedOnOutput,
     );
 

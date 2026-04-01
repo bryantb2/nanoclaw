@@ -27,6 +27,7 @@ interface GroupState {
   groupFolder: string | null;
   retryCount: number;
   cancelled: boolean;
+  resetTimeout: (() => void) | null;
 }
 
 export class GroupQueue {
@@ -53,6 +54,7 @@ export class GroupQueue {
         groupFolder: null,
         retryCount: 0,
         cancelled: false,
+        resetTimeout: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -143,10 +145,12 @@ export class GroupQueue {
     proc: ChildProcess,
     containerName: string,
     groupFolder?: string,
+    resetTimeout?: () => void,
   ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
+    state.resetTimeout = resetTimeout ?? null;
     if (groupFolder) {
       state.groupFolder = groupFolder;
       // Clean up any stale .git/index.lock left behind by a cancelled container
@@ -184,6 +188,9 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
+      // New IPC work piped — reset the container hard timeout so the agent
+      // gets a full timeout window to process this message.
+      state.resetTimeout?.();
       return true;
     } catch {
       return false;

@@ -369,7 +369,11 @@ async function buildContainerArgs(
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
-  onProcess: (proc: ChildProcess, containerName: string) => void,
+  onProcess: (
+    proc: ChildProcess,
+    containerName: string,
+    resetTimeout: () => void,
+  ) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
@@ -471,7 +475,11 @@ export async function runContainerAgent(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    onProcess(container, containerName);
+    // Mutable reference to the timeout reset function, assigned once the
+    // timeout is created below.  Exposed to the host via onProcess so that
+    // the group queue can reset the hard timeout when new IPC work is piped.
+    let resetTimeoutFn: (() => void) | undefined;
+    onProcess(container, containerName, () => resetTimeoutFn?.());
 
     let stdout = '';
     let stderr = '';
@@ -603,11 +611,13 @@ export async function runContainerAgent(
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
+    // Reset the timeout whenever there's activity (streaming output or IPC message)
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
     };
+    // Expose to the host-side wrapper created above
+    resetTimeoutFn = resetTimeout;
 
     container.on('close', (code) => {
       clearTimeout(timeout);
@@ -758,8 +768,7 @@ export async function runContainerAgent(
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-          totalCostUsd:
-            accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+          totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
         });
         return;
       }

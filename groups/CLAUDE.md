@@ -272,47 +272,47 @@ node /app/drive-tool.cjs resolve "Product Development/Software PRD"
 
 ### Gmail — Send & Read Email
 
-You can send and read email as fleet@krewtrack.com using the googleapis library.
-
-**Auth pattern (reuse for all Workspace APIs):**
-```javascript
-const { google } = require('googleapis');
-const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-const auth = new google.auth.JWT({
-  email: key.client_email,
-  key: key.private_key,
-  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
-  subject: 'fleet@krewtrack.com',
-});
-const gmail = google.gmail({ version: 'v1', auth });
-```
+You can send and read email as fleet@krewtrack.com using the `gmail-tool.cjs` CLI (same pattern as drive-tool.cjs). Auth uses the service account with domain-wide delegation — no extra setup needed.
 
 **Send an email:**
-```javascript
-const raw = Buffer.from(
-  `To: recipient@example.com\r\nSubject: Subject here\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBody text here`
-).toString('base64url');
-await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+```bash
+node /app/gmail-tool.cjs send --to "recipient@example.com" --subject "Subject here" --body "Body text here"
 ```
 
-**Send with attachment (PDF, etc.):**
-```javascript
-const boundary = 'boundary_fleet';
-const attachment = fs.readFileSync('/tmp/report.pdf').toString('base64');
-const raw = Buffer.from(
-  `To: recipient@example.com\r\nSubject: Subject\r\nMIME-Version: 1.0\r\n` +
-  `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
-  `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached.\r\n` +
-  `--${boundary}\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n` +
-  `Content-Disposition: attachment; filename="report.pdf"\r\n\r\n${attachment}\r\n--${boundary}--`
-).toString('base64url');
-await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+**Send with CC/BCC:**
+```bash
+node /app/gmail-tool.cjs send --to "recipient@example.com" --cc "cc@example.com" --subject "Subject" --body "Body"
 ```
 
-**Read recent emails:**
-```javascript
-const res = await gmail.users.messages.list({ userId: 'me', maxResults: 10 });
-const msg = await gmail.users.messages.get({ userId: 'me', id: res.data.messages[0].id });
+**Send with attachment:**
+```bash
+node /app/gmail-tool.cjs send --to "recipient@example.com" --subject "Report" --body "See attached." --attach /tmp/report.pdf
+```
+
+**Reply to a message:**
+```bash
+node /app/gmail-tool.cjs reply --id <messageId> --body "Reply text here"
+```
+
+**List recent emails:**
+```bash
+node /app/gmail-tool.cjs list
+node /app/gmail-tool.cjs list --query "is:unread" --max 5
+```
+
+**Read a specific email:**
+```bash
+node /app/gmail-tool.cjs read <messageId>
+```
+
+**Search emails:**
+```bash
+node /app/gmail-tool.cjs search "from:someone@example.com subject:invoice"
+```
+
+**List labels:**
+```bash
+node /app/gmail-tool.cjs labels
 ```
 
 ### Google Sheets — Read & Write
