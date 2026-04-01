@@ -339,9 +339,17 @@ function guessMimeType(filename) {
   return types[ext] || 'application/octet-stream';
 }
 
+// Exports for testing (not used at runtime)
+exports._extractBody = extractBody;
+exports._guessMimeType = guessMimeType;
+exports._getHeader = getHeader;
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
+
+// Only run CLI when executed directly (not when required for testing)
+if (require.main !== module) return;
 
 const [,, cmd, ...rest] = process.argv;
 
