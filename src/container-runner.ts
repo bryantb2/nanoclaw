@@ -369,7 +369,11 @@ async function buildContainerArgs(
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
-  onProcess: (proc: ChildProcess, containerName: string, resetTimeout: () => void) => void,
+  onProcess: (
+    proc: ChildProcess,
+    containerName: string,
+    resetTimeout: () => void,
+  ) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
@@ -764,8 +768,7 @@ export async function runContainerAgent(
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-          totalCostUsd:
-            accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+          totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
         });
         return;
       }

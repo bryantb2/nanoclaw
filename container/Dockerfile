@@ -43,14 +43,16 @@ WORKDIR /app
 # Copy package files first for better caching
 COPY agent-runner/package*.json ./
 
-# Install dependencies + googleapis for drive-tool.cjs
+# Install dependencies + googleapis for drive-tool.cjs and gmail-tool.cjs
 RUN npm install && npm install googleapis
 
 # Copy source code
 COPY agent-runner/ ./
 
-# Copy drive-tool.cjs CLI for Google Drive/Docs integration (.cjs = CommonJS in ESM project)
+# Copy CLI tools for Google Workspace integration (.cjs = CommonJS in ESM project)
+COPY google-workspace-utils.cjs /app/google-workspace-utils.cjs
 COPY drive-tool.cjs /app/drive-tool.cjs
+COPY gmail-tool.cjs /app/gmail-tool.cjs
 
 # Build TypeScript
 RUN npm run build
