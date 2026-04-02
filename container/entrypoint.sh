@@ -2,27 +2,15 @@
 set -e
 
 # --- Git + gh credential setup for multi-installation GitHub App ---
-# GITHUB_INSTALLATION_TOKENS is a JSON array: [{"account":"org","token":"ghs_..."},...]
-# Sets up:
-#   1. A shared token map file (sourced by both helpers)
-#   2. A git credential helper that routes by repo owner
-#   3. A gh CLI wrapper at /usr/bin/gh that sets GH_TOKEN per repo owner
-if [ -n "$GITHUB_INSTALLATION_TOKENS" ]; then
+# GITHUB_APP_PRIVATE_KEY + GITHUB_APP_ID are passed from the host.
+# Tokens are generated lazily by github-token.cjs (cached ~55 min).
+if [ -n "$GITHUB_APP_PRIVATE_KEY" ] && [ -n "$GITHUB_APP_ID" ]; then
 
-  # --- Shared: write token map as a sourceable file ---
-  TOKEN_MAP="$HOME/.github-token-map.sh"
-  echo "$GITHUB_INSTALLATION_TOKENS" | node -e "
-    const tokens = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-    console.log('declare -A GITHUB_TOKENS');
-    tokens.forEach(t => console.log('GITHUB_TOKENS[\"' + t.account.toLowerCase() + '\"]=\"' + t.token + '\"'));
-  " > "$TOKEN_MAP"
-
-  # --- Git credential helper: routes token by repo owner ---
+  # --- Git credential helper: generates fresh token on demand ---
   HELPER="$HOME/.git-credential-helper.sh"
   cat > "$HELPER" << 'HELPEREOF'
 #!/bin/bash
 if [ "$1" != "get" ]; then exit 0; fi
-source "$HOME/.github-token-map.sh"
 
 REPO_PATH=""
 while IFS='=' read -r key value; do
@@ -31,11 +19,10 @@ while IFS='=' read -r key value; do
 done
 
 OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
-TOKEN="${GITHUB_TOKENS[$OWNER]}"
+[ -z "$OWNER" ] && OWNER="default"
 
-# Fallback to first token
-if [ -z "$TOKEN" ]; then
-  for k in "${!GITHUB_TOKENS[@]}"; do TOKEN="${GITHUB_TOKENS[$k]}"; break; done
+if ! TOKEN=$(node /app/github-token.cjs "$OWNER"); then
+  exit 1
 fi
 
 echo "protocol=https"
@@ -48,11 +35,9 @@ HELPEREOF
   git config --global credential.helper "$HELPER"
   git config --global credential.useHttpPath true
 
-  # --- gh CLI wrapper: overwrite /usr/bin/gh (made writable by Dockerfile) ---
+  # --- gh CLI wrapper: generates fresh token per invocation ---
   cat > /usr/bin/gh << 'GHEOF'
 #!/bin/bash
-source "$HOME/.github-token-map.sh"
-
 OWNER=""
 
 # Check -R / --repo flag
@@ -82,9 +67,11 @@ if [ -z "$OWNER" ] && git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 OWNER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+[ -z "$OWNER" ] && OWNER="default"
 
-if [ -n "$OWNER" ] && [ -n "${GITHUB_TOKENS[$OWNER]}" ]; then
-  export GH_TOKEN="${GITHUB_TOKENS[$OWNER]}"
+TOKEN=$(node /app/github-token.cjs "$OWNER" 2>/dev/null)
+if [ -n "$TOKEN" ]; then
+  export GH_TOKEN="$TOKEN"
 fi
 
 exec /usr/bin/gh.real "$@"

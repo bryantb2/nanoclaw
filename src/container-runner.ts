@@ -3,7 +3,6 @@
  * Spawns agent execution in containers and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
-import { createSign } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -33,82 +32,6 @@ import { RegisteredGroup } from './types.js';
 const onecli = new OneCLI({ url: ONECLI_URL });
 
 const GITHUB_APP_ID = '3043813';
-
-function createGitHubAppJwt(privateKey: string): string {
-  const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(
-    JSON.stringify({ alg: 'RS256', typ: 'JWT' }),
-  ).toString('base64url');
-  const payload = Buffer.from(
-    JSON.stringify({ iat: now - 60, exp: now + 600, iss: GITHUB_APP_ID }),
-  ).toString('base64url');
-  const signingInput = `${header}.${payload}`;
-  const sign = createSign('RSA-SHA256');
-  sign.update(signingInput);
-  return `${signingInput}.${sign.sign(privateKey, 'base64url')}`;
-}
-
-interface GitHubInstallationToken {
-  installationId: number;
-  account: string;
-  token: string;
-  isOrg: boolean;
-}
-
-async function getAllGitHubInstallationTokens(
-  privateKey: string,
-): Promise<GitHubInstallationToken[]> {
-  const jwt = createGitHubAppJwt(privateKey);
-  const headers = {
-    Authorization: `Bearer ${jwt}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'nanoclaw',
-  };
-
-  // List all installations for this GitHub App
-  const listResp = await fetch('https://api.github.com/app/installations', {
-    headers,
-  });
-  if (!listResp.ok) {
-    throw new Error(
-      `GitHub installations list failed: ${listResp.status} ${await listResp.text()}`,
-    );
-  }
-  const installations = (await listResp.json()) as Array<{
-    id: number;
-    account: { login: string };
-    target_type: 'Organization' | 'User';
-  }>;
-
-  // Generate a token for each installation
-  const tokens: GitHubInstallationToken[] = [];
-  for (const inst of installations) {
-    const tokenResp = await fetch(
-      `https://api.github.com/app/installations/${inst.id}/access_tokens`,
-      { method: 'POST', headers },
-    );
-    if (!tokenResp.ok) {
-      logger.warn(
-        { installationId: inst.id, account: inst.account.login },
-        'Failed to generate token for installation, skipping',
-      );
-      continue;
-    }
-    const data = (await tokenResp.json()) as { token: string };
-    tokens.push({
-      installationId: inst.id,
-      account: inst.account.login,
-      token: data.token,
-      isOrg: inst.target_type === 'Organization',
-    });
-  }
-
-  if (tokens.length === 0) {
-    throw new Error('No GitHub installation tokens could be generated');
-  }
-  return tokens;
-}
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -398,29 +321,11 @@ export async function runContainerAgent(
   if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
     extraEnv.GOOGLE_SERVICE_ACCOUNT_JSON =
       process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  // Pass GitHub App credentials so the container can generate fresh
+  // installation tokens on demand (tokens expire after 1 hour).
   if (process.env.GITHUB_APP_PRIVATE_KEY) {
-    try {
-      const tokens = await getAllGitHubInstallationTokens(
-        process.env.GITHUB_APP_PRIVATE_KEY,
-      );
-      // All tokens as JSON array — entrypoint.sh sets up credential helper
-      // and gh wrapper. No GITHUB_TOKEN needed (wrapper sets GH_TOKEN per-repo).
-      extraEnv.GITHUB_INSTALLATION_TOKENS = JSON.stringify(
-        tokens.map((t) => ({ account: t.account, token: t.token })),
-      );
-      logger.info(
-        {
-          containerName,
-          installations: tokens.map((t) => t.account),
-        },
-        'GitHub installation tokens generated',
-      );
-    } catch (err) {
-      logger.warn(
-        { containerName, err },
-        'Failed to generate GitHub installation tokens',
-      );
-    }
+    extraEnv.GITHUB_APP_PRIVATE_KEY = process.env.GITHUB_APP_PRIVATE_KEY;
+    extraEnv.GITHUB_APP_ID = GITHUB_APP_ID;
   }
 
   const containerArgs = await buildContainerArgs(
