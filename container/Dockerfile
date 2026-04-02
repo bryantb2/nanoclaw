@@ -49,10 +49,11 @@ RUN npm install && npm install googleapis
 # Copy source code
 COPY agent-runner/ ./
 
-# Copy CLI tools for Google Workspace integration (.cjs = CommonJS in ESM project)
+# Copy CLI tools (.cjs = CommonJS in ESM project)
 COPY google-workspace-utils.cjs /app/google-workspace-utils.cjs
 COPY drive-tool.cjs /app/drive-tool.cjs
 COPY gmail-tool.cjs /app/gmail-tool.cjs
+COPY github-token.cjs /app/github-token.cjs
 
 # Build TypeScript
 RUN npm run build
