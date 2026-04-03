@@ -103,6 +103,15 @@ Plan your work within this budget:
 
 ## Process
 
+### Phase 0: Compliance Check (before observation)
+For each proposal merged (approved and applied) in the last 7 days:
+1. Note the rule that was added or changed
+2. Search the most recent session of the relevant group for evidence of compliance or violation
+3. If a violation is found: flag as **REGRESSION** in the report with evidence (session ID + line number)
+4. If compliant: note as **HOLDING** in the report
+
+Regressions on approved proposals take priority over new observations — a rule that was merged and is already being violated is more urgent than a new pattern to fix. Complete this pass before proceeding to Phase 1.
+
 ### Phase 1: Observe
 1. Read today's session transcripts across all groups
 2. Note META-level patterns:

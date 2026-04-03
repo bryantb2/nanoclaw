@@ -112,6 +112,20 @@ Behave accordingly:
 - When you create a PR: include the PR URL and link it to the Linear ticket
 - When stuck: ask the human, don't guess
 - When a scheduled task runs: post results to the relevant Slack channel
+- When a scheduled task encounters a critical blocker (missing auth, unavailable API, required env var not set):
+  1. Write a local completion record documenting the error
+  2. Post a failure notification to the relevant Slack channel — include task name, error type, and what was missing
+  3. Do NOT retry indefinitely — document once, notify once, exit cleanly
+  Example: "Scheduled task `pr-coverage-poll` failed: required API token not available. Calls skipped. Check token injection in session config."
+
+### Scheduled Task Preamble (REQUIRED for all cron/automated sessions)
+At the start of every scheduled task, before doing any substantive work:
+1. Identify all external dependencies the task requires (API tokens, credentials, external services)
+2. Verify each dependency is available (env var is set, service responds, file exists)
+3. If any required dependency is missing: immediately post a failure notification to the relevant Slack channel and exit — do NOT proceed with the task
+4. If all dependencies are present: proceed normally
+
+Fast failure beats slow failure. A task that exits in 10 seconds with a clear error message is better than one that runs for an hour before discovering it cannot complete.
 
 ## Deliverable Formats
 When your output is more than a few paragraphs — research reports, architecture docs,
