@@ -197,6 +197,15 @@ Every PR must include:
 - **Linear ticket**: Link to the ticket (if applicable)
 - **Test results**: Paste the test output showing green
 
+### Pre-PR Verification (REQUIRED)
+Before running `gh pr create` for any ticket:
+1. Invoke the `/verification-before-completion` skill
+2. The skill output must confirm tests pass and QA has reviewed the diff
+3. Include the skill's verification summary in the PR body under "Test results"
+
+Skipping this step means the task is NOT done, regardless of what the Engineer reported.
+The PR template is incomplete without verification output.
+
 ## QA Review Policy — MANDATORY COMPLETION GATE
 
 A task is NOT complete until QA signs off. Follow this exact sequence:

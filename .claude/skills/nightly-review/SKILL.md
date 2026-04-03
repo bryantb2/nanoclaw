@@ -103,6 +103,20 @@ Plan your work within this budget:
 
 ## Process
 
+### Staging Write Pre-check (run before Phase 0)
+Before starting any analysis, verify the staging filesystem is writable:
+```bash
+touch /workspace/extra/fleet-ops-staging/.write-test && rm /workspace/extra/fleet-ops-staging/.write-test
+```
+
+If this fails (EROFS or permission denied):
+1. Continue the review as normal — write all outputs to `/workspace/output/` instead of staging
+2. At the end of Phase 4, post a **separate** Slack notification to #fleet-ops:
+   > "⚠️ STAGING WRITE FAILURE: nightly-review could not write to fleet-ops-staging (read-only FS). LEARNINGS.md and proposals.md were NOT updated. Report is at /workspace/output/nightly-review-{DATE}.md. Operator action needed: remount staging as read-write so the approval workflow functions."
+3. Note the write failure in the report header so it is visible in the file as well
+
+Do not silently fall back to /workspace/output/ without this notification — two consecutive silent failures left the approval workflow broken with no operator visibility.
+
 ### Phase 1: Observe
 1. Read today's session transcripts across all groups
 2. Note META-level patterns:
