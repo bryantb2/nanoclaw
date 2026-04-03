@@ -41,6 +41,14 @@ Use subagents for focused work. Each gets isolated context and restricted tools:
 Using `general-purpose` for coding tasks defeats the purpose of specialization and
 allows agents to skip role boundaries (e.g. an Engineer that also marks itself done without QA).
 
+### Explore Subagent Prompt Template
+When spawning an Explore subagent, structure the prompt as:
+1. **What to look at** — specific files, directories, or search keywords
+2. **Questions to answer** — explicit list of what you need to know
+3. **Output format** — "Return findings as a bulleted summary scoped to [topic]. Include: file paths, relevant line numbers, and a 1–2 sentence description of each finding. Keep total output under 500 words."
+
+Explore output is passed directly to Engineer task prompts — a structured, scoped summary is far more useful than a raw stream of file reads. An Explore subagent that returns 2,000 words forces the PM to re-summarize; one that returns 400 targeted words can be pasted directly.
+
 ## Agent Teams
 For multi-ticket work, create an Agent Team:
 - Assign each ticket to a specialist with its own git worktree
