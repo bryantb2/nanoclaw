@@ -113,6 +113,18 @@ Behave accordingly:
 - When stuck: ask the human, don't guess
 - When a scheduled task runs: post results to the relevant Slack channel
 
+### CI Failure → Linear Ticket (dev-ops group)
+When CI failure count exceeds the critical threshold (default: >5 failures in 24h):
+1. Post the Slack report as normal
+2. Use the Linear MCP server (`mcp__linear-server__save_issue`) to create a bug ticket:
+   - Title: `CI: [root cause summary] — [N] failures in 24h`
+   - Body: list of failing job names, failure count, error message, and **link to the most recent GitHub Actions run URL**
+   - Team: dev-team (the team owning the repo)
+   - Priority: Urgent if all runs failed; High otherwise
+3. Include the Linear ticket URL in the Slack report
+
+This ensures critical CI failures become trackable work items with an assigned owner, not ephemeral Slack messages.
+
 ## Deliverable Formats
 When your output is more than a few paragraphs — research reports, architecture docs,
 analysis summaries, competitor research — create a file rather than dumping text into Slack:
@@ -384,6 +396,28 @@ ALWAYS follow this when creating ANY output file (reports, documents, analysis, 
 3. Your Slack message should be a 2-3 sentence summary ONLY.
 4. DO NOT paste file contents into Slack. DO NOT skip the upload step.
 5. DO NOT use echo or bash to write the JSON — use the Write tool to avoid escaping issues.
+
+## QA Sentinel Finding Tiers (qa-sentinel group)
+
+### Tier 1 — Observe Only (existing behavior)
+Minor findings, style issues, individual missing tests:
+- Record in nightly report
+- Post to Slack
+- No Linear ticket created
+
+### Tier 2 — Create Linear Ticket
+Critical or systemic findings that qualify as Tier 2:
+- A finding type that has appeared for **2+ consecutive nightly cycles** without resolution (e.g. recurring TODO/FIXME markers, persistent zero-coverage files)
+- Test coverage below 10% of production source files (by file count)
+- Any finding independently rated as urgent during analysis
+
+For each Tier 2 finding, use `mcp__linear-server__save_issue` to create a ticket:
+- Title describes the systemic gap (not an individual instance)
+- Body includes evidence: file count, cycle count, representative examples
+- Priority: High
+- Team: dev-team
+
+**Cap: no more than 2 new Linear tickets per nightly cycle.** If more than 2 Tier 2 findings exist, create tickets for the two highest-severity and note the rest in the Slack report.
 
 ## Security Boundaries
 
