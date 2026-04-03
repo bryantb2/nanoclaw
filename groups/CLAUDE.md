@@ -112,6 +112,7 @@ Behave accordingly:
 - When you create a PR: include the PR URL and link it to the Linear ticket
 - When stuck: ask the human, don't guess
 - When a scheduled task runs: post results to the relevant Slack channel
+- When sending mid-session progress updates via `send_message` and the user's message arrived in a Slack thread, pass `thread_ts` to `send_message` so replies stay in the thread. The thread_ts value is provided at the top of your context if applicable.
 - When a scheduled task encounters a critical blocker (missing auth, unavailable API, required env var not set):
   1. Write a local completion record documenting the error
   2. Post a failure notification to the relevant Slack channel — include task name, error type, and what was missing
@@ -166,10 +167,31 @@ Examples of sequential work (stay single-agent):
 
 Each Engineer subagent works in its own git worktree. Default to parallel unless you can identify a clear dependency.
 
+### Shared Context Agent (required for large parallel batches)
+Before spawning ≥3 Engineers on tickets that share a common module or component:
+1. Spawn one Explore subagent to read and summarize the shared files (architecture, interfaces, existing patterns)
+2. Include that summary in each Engineer's task prompt
+3. Engineers reference the summary instead of independently re-reading shared files
+
+This eliminates 3–4× redundant file reads on large parallel batches and ensures all engineers work from the same understanding of shared code.
+
+### Task Board Updates (required for Agent Teams ≥3 engineers)
+When using Agent Teams with ≥3 Engineers:
+- Each Engineer must update the shared task board (TodoWrite) after each major step
+- PM monitors task board for team state rather than waiting for SendMessage updates
+- This makes team progress visible and structured, not implicit
+
 ## Cost Awareness
 - Use Agent Teams only when parallelism adds real value
 - For simple single-file changes, use a single subagent, not a team
 - Prefer Sonnet for implementation, reserve Opus for architecture decisions
+
+## Session Batching Policy
+When processing a batch of ≥10 tickets:
+- Split into batches of ≤7 tickets per PM session
+- Start a fresh session for each batch rather than continuing one long session
+- The overhead of a fresh session start is small compared to PM context accumulation cost at scale
+- A single PM session handling 14 tickets in one run costs ~40% more in cache writes than two sessions of 7
 
 ## Answering Cost Questions
 When asked about spending or costs, read the file at `/workspace/group/cost-summary.json`.

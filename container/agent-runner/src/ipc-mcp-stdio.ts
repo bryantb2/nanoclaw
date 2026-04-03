@@ -19,6 +19,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const threadTs = process.env.NANOCLAW_THREAD_TS;
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -45,13 +46,16 @@ server.tool(
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    thread_ts: z.string().optional().describe('Slack thread timestamp to reply in-thread. If omitted, falls back to the thread context this container was invoked in (if any).'),
   },
   async (args) => {
+    const resolvedThreadTs = args.thread_ts || threadTs;
     const data: Record<string, string | undefined> = {
       type: 'message',
       chatJid,
       text: args.text,
       sender: args.sender || undefined,
+      threadTs: resolvedThreadTs,
       groupFolder,
       timestamp: new Date().toISOString(),
     };
