@@ -60,3 +60,4 @@ groups/slack_product-brain/*
 agents-sdk-docs
 .env.emergency
 .infisical.json
+start-nanoclaw.sh
