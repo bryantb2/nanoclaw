@@ -20,7 +20,9 @@ const path = require('path');
 const CACHE_DIR = path.join(process.env.HOME || '/home/node', '.github-token-cache');
 const CACHE_TTL_MS = 55 * 60 * 1000; // 55 minutes (tokens expire at 60)
 
-function createJwt(privateKey, appId) {
+function createJwt(rawKey, appId) {
+  // Normalize escaped newlines from env files (e.g., literal \n → actual newlines)
+  const privateKey = rawKey.replace(/\\n/g, '\n');
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 600, iss: appId })).toString('base64url');
