@@ -159,6 +159,30 @@ to the relevant Slack channel with a brief summary message.
 Keep the Slack message short: 2-3 sentence summary of key findings + the file attachment.
 Never dump a full report as a Slack message — always attach as a file.
 
+## Local PostgreSQL for Testing
+
+An ephemeral PostgreSQL server is available inside this container. Use it for integration tests, E2E tests, and any work that needs a real database.
+
+**Start Postgres:**
+```bash
+source /app/start-postgres.sh
+```
+
+This starts PostgreSQL on `localhost:5432`, creates a `forcify_test` database, and exports all `PG_*` env vars. After sourcing, you can run migrations and start the app:
+
+```bash
+cd /path/to/project
+node ace migration:run --env=test
+NODE_ENV=test node ace serve --port=3333 &
+```
+
+The database is fully ephemeral — it's destroyed when the container exits. No cleanup needed.
+
+**Credentials (auto-exported by the script):**
+- `PG_HOST=localhost`, `PG_PORT=5432`
+- `PG_USER=testuser`, `PG_PASSWORD=testpass`
+- `PG_DB_NAME=forcify_test`, `DB_CONNECTION=pg`
+
 ## When to Use Agent Teams
 
 **Default to parallel for independent work.** When you receive a request with 2+ items that have no shared files and no dependency chain (A must complete before B can start), use Agent Teams automatically -- you do not need the user to say "in parallel."

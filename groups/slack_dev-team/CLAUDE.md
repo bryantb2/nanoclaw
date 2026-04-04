@@ -33,6 +33,21 @@
 - Stack: [Blake fills in]
 - Testing: [Blake fills in]
 
+## Pre-PR Verification
+
+Before opening a PR, run the project's test suite locally to catch issues early — this saves a round-trip through QA and avoids back-and-forth on fixable problems.
+
+**Forcify (AdonisJS):**
+```bash
+source /app/start-postgres.sh
+cd /workspace/extra/repos/forcify
+npm ci --prefer-offline
+node ace migration:run --env=test
+node ace test --reporter=spec
+```
+
+If tests fail, fix them before pushing. If a test failure is pre-existing (not caused by your changes), note it in the PR description.
+
 ## Conventions
 - All PRs require test coverage for new logic
 - Commit style: conventional commits (feat/fix/chore/refactor/test/docs)
