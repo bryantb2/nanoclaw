@@ -7,6 +7,12 @@ import {
   startSchedulerLoop,
 } from './task-scheduler.js';
 
+// Mock container-runner so tests don't need Docker
+vi.mock('./container-runner.js', () => ({
+  runContainerAgent: vi.fn(),
+  writeTasksSnapshot: vi.fn(),
+}));
+
 describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
@@ -125,5 +131,182 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+});
+
+describe('budget exhaustion notification', () => {
+  let runContainerAgentMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    _initTestDatabase();
+    _resetSchedulerLoopForTests();
+    vi.useFakeTimers();
+    const mod = await import('./container-runner.js');
+    runContainerAgentMock = mod.runContainerAgent as ReturnType<typeof vi.fn>;
+    runContainerAgentMock.mockReset();
+    (mod.writeTasksSnapshot as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('sends budget exhaustion Slack message when error contains "budget"', async () => {
+    createTask({
+      id: 'task-budget-test',
+      group_folder: 'slack_test-group',
+      chat_jid: 'test-channel@slack',
+      prompt: 'run',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    runContainerAgentMock.mockResolvedValue({
+      status: 'error',
+      result: null,
+      error: 'Agent exceeded budget limit of $3.00',
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const enqueueTask = vi.fn(
+      (_jid: string, _id: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'test-channel@slack': {
+          jid: 'test-channel@slack',
+          folder: 'slack_test-group',
+          isMain: false,
+          context_mode: 'isolated',
+        } as any,
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask, closeStdin: vi.fn(), notifyIdle: vi.fn() } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    // sendMessage must have been called with budget exhaustion notice
+    const budgetCall = sendMessage.mock.calls.find(([, text]: [string, string]) =>
+      /budget/i.test(text),
+    );
+    expect(budgetCall).toBeDefined();
+    expect(budgetCall![0]).toBe('test-channel@slack');
+    expect(budgetCall![1]).toMatch(/task-budget-test/);
+    expect(budgetCall![1]).toMatch(/\$\d+\.\d{2}/);
+  });
+
+  it('does NOT send budget notification when error does not contain "budget"', async () => {
+    createTask({
+      id: 'task-normal-error',
+      group_folder: 'slack_test-group',
+      chat_jid: 'test-channel@slack',
+      prompt: 'run',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    runContainerAgentMock.mockResolvedValue({
+      status: 'error',
+      result: null,
+      error: 'Container crashed unexpectedly',
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const enqueueTask = vi.fn(
+      (_jid: string, _id: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'test-channel@slack': {
+          jid: 'test-channel@slack',
+          folder: 'slack_test-group',
+          isMain: false,
+          context_mode: 'isolated',
+        } as any,
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask, closeStdin: vi.fn(), notifyIdle: vi.fn() } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    // No budget-specific message should be sent
+    const budgetCall = sendMessage.mock.calls.find(([, text]: [string, string]) =>
+      /budget/i.test(text),
+    );
+    expect(budgetCall).toBeUndefined();
+  });
+
+  it('budget notification message includes task ID and dollar cap', async () => {
+    createTask({
+      id: 'task-cap-check',
+      group_folder: 'slack_test-group',
+      chat_jid: 'cap-channel@slack',
+      prompt: 'run',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+      max_budget_usd: 5.0,
+    });
+
+    runContainerAgentMock.mockResolvedValue({
+      status: 'error',
+      result: null,
+      error: 'budget exceeded',
+    });
+
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const enqueueTask = vi.fn(
+      (_jid: string, _id: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'cap-channel@slack': {
+          jid: 'cap-channel@slack',
+          folder: 'slack_test-group',
+          isMain: false,
+          context_mode: 'isolated',
+        } as any,
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask, closeStdin: vi.fn(), notifyIdle: vi.fn() } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const budgetCall = sendMessage.mock.calls.find(([, text]: [string, string]) =>
+      /budget/i.test(text),
+    );
+    expect(budgetCall).toBeDefined();
+    expect(budgetCall![1]).toContain('task-cap-check');
+    expect(budgetCall![1]).toContain('$5.00');
   });
 });

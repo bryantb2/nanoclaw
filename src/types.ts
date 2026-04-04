@@ -78,6 +78,43 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+// --- Completion record schema ---
+
+/** Completion record written by every agent loop to /workspace/output/latest.json */
+export interface CompletionRecord {
+  schema_version: '1.0';
+  agent: string;
+  task_id: string;
+  status: 'success' | 'error' | 'budget_exceeded' | 'timeout';
+  timestamp: string;
+  duration_ms: number;
+  cost_usd: number;
+  inputs: Record<string, unknown>;
+  outputs: CompletionOutput[];
+  audit_entry: string;
+  blockers: string[];
+  cross_loop_signals: CrossLoopSignal[];
+}
+
+export interface CompletionOutput {
+  type:
+    | 'slack_message'
+    | 'github_pr'
+    | 'linear_ticket'
+    | 'drive_doc'
+    | 'file'
+    | 'other';
+  description: string;
+  url?: string;
+  artifact_id?: string;
+}
+
+export interface CrossLoopSignal {
+  signal_type: string;
+  payload: Record<string, unknown>;
+  target_group?: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

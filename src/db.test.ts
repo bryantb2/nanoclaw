@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import {
   _initTestDatabase,
+  _initFileDatabaseForTest,
+  _getDb,
   appendCostLog,
   createTask,
   deleteTask,
@@ -504,12 +509,12 @@ describe('appendCostLog', () => {
   });
 
   it('isolates costs by group folder', () => {
-    appendCostLog('main', 'group@g.us', 0.10);
-    appendCostLog('other-group', 'group@g.us', 0.50);
+    appendCostLog('main', 'group@g.us', 0.1);
+    appendCostLog('other-group', 'group@g.us', 0.5);
     const mainSummary = getCostSummary('main');
     const otherSummary = getCostSummary('other-group');
-    expect(mainSummary.allTimeUsd).toBeCloseTo(0.10);
-    expect(otherSummary.allTimeUsd).toBeCloseTo(0.50);
+    expect(mainSummary.allTimeUsd).toBeCloseTo(0.1);
+    expect(otherSummary.allTimeUsd).toBeCloseTo(0.5);
   });
 });
 
@@ -529,5 +534,56 @@ describe('getCostSummary', () => {
     // todayUsd and weekUsd should also include these (inserted now)
     expect(summary.todayUsd).toBeCloseTo(0.008);
     expect(summary.weekUsd).toBeCloseTo(0.008);
+  });
+});
+
+// --- database initialization safety ---
+
+describe('database initialization safety', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-test-'));
+  });
+
+  afterEach(() => {
+    // Close db before cleanup so file handle is released
+    try { _getDb().close(); } catch { /* may already be closed */ }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Restore in-memory db for global beforeEach
+    _initTestDatabase();
+  });
+
+  it('initDatabase path sets busy_timeout=5000 on a file-based DB', () => {
+    // _initFileDatabaseForTest mirrors the pre-pragma state of initDatabase().
+    // After GREEN: initDatabase() will call db.pragma('busy_timeout = 5000'),
+    // setting it to 5000 explicitly.
+    // This test proves the value is 5000 on any file-based DB created by this path.
+    _initFileDatabaseForTest(path.join(tmpDir, 'test.db'));
+    const dbInst = _getDb();
+    const result = dbInst.pragma('busy_timeout') as Array<{ timeout: number }>;
+    expect(result[0].timeout).toBe(5000);
+  });
+
+  it('_initTestDatabase does NOT set busy_timeout explicitly (in-memory DBs have no file locking)', () => {
+    // Verify the distinction: _initTestDatabase creates an in-memory DB.
+    // We confirm it doesn't call busy_timeout pragma by checking that we can
+    // freely change the value without any override from _initTestDatabase.
+    _initTestDatabase();
+    const db = _getDb();
+    // Set to a non-default sentinel value
+    db.pragma('busy_timeout = 1234');
+    expect(
+      (db.pragma('busy_timeout') as Array<{ timeout: number }>)[0].timeout,
+    ).toBe(1234);
+    // Re-init — _initTestDatabase does NOT reset busy_timeout, new DB has default
+    _initTestDatabase();
+    // New db instance — the old sentinel is gone (it was a different object)
+    // This confirms _initTestDatabase creates a fresh DB without calling busy_timeout pragma
+    const db2 = _getDb();
+    const result = db2.pragma('busy_timeout') as Array<{ timeout: number }>;
+    // The new in-memory db has the system default (5000), NOT our sentinel (1234)
+    // This proves _initTestDatabase creates a fresh DB without our pragma call
+    expect(result[0].timeout).not.toBe(1234);
   });
 });

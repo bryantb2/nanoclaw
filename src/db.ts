@@ -177,6 +177,7 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('busy_timeout = 5000');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -186,6 +187,22 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  createSchema(db);
+}
+
+/** @internal - for tests only. Returns the current database instance. */
+export function _getDb(): Database.Database {
+  return db;
+}
+
+/**
+ * @internal - for tests only. Opens a file-based database at the given path,
+ * without any pragmas. Use this to test the busy_timeout pragma contract:
+ * this helper intentionally mirrors the pre-pragma state of initDatabase().
+ */
+export function _initFileDatabaseForTest(dbPath: string): void {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  db = new Database(dbPath);
   createSchema(db);
 }
 

@@ -575,3 +575,122 @@ For each Tier 2 finding, use `mcp__linear-server__save_issue` to create a ticket
 ### Drive Write Policy
 - Default output folder: "Fleet Output" shared drive folder
 - For any other Drive location, ask the user first
+
+## Completion Records
+
+At the end of EVERY autonomous cron task (not human-triggered conversations), write a completion record to `/workspace/output/latest.json` as the LAST action before ending your response.
+
+**For human-triggered conversations, do NOT write completion records.**
+
+**Cross-loop signals are WRITE-ONLY** — write signals into your own completion record. Only #dispatch reads all records and routes signals. No loop reads another loop's records directly.
+
+### Write Steps
+
+1. Write the completion record to `/workspace/output/latest.json` (always overwrite).
+2. Copy it to `/workspace/output/archive/{ISO_TIMESTAMP_with_hyphens}.json` — e.g., `2026-03-30T10-00-00.json`.
+3. Delete any files in `/workspace/output/archive/` with a date prefix older than 7 days (compare filename date to today's date).
+
+### Schema Version 1.0
+
+The record MUST conform to this schema exactly:
+
+```json
+{
+  "schema_version": "1.0",
+  "agent": "{YOUR_GROUP_FOLDER_NAME}",
+  "task_id": "{TASK_ID_FROM_PROMPT_CONTEXT_OR_human-CHATJID-TIMESTAMP}",
+  "status": "success|error|budget_exceeded|timeout",
+  "timestamp": "{ISO_8601}",
+  "duration_ms": 0,
+  "cost_usd": 0.00,
+  "inputs": {
+    "task_id": "{scheduled_task_id}",
+    "group_folder": "{group_folder}",
+    "scheduled_at": "{ISO_8601}"
+  },
+  "outputs": [
+    {
+      "type": "slack_message|github_pr|linear_ticket|drive_doc|file|other",
+      "description": "Human-readable description of what was produced",
+      "url": "https://optional-link",
+      "artifact_id": "optional-id"
+    }
+  ],
+  "audit_entry": "[{YYYY-MM-DD HH:MM}] [{cron|human}] {agent_name}: {action} -- {artifact_link} -- ${cost}",
+  "blockers": [],
+  "cross_loop_signals": [
+    {
+      "signal_type": "pr_ready_for_review",
+      "payload": {},
+      "target_group": "dispatch"
+    }
+  ]
+}
+```
+
+**Field notes:**
+- `agent`: Use the group folder name (e.g., `slack_qa-sentinel`)
+- `task_id`: Use the scheduled task ID from context. For human-triggered tasks (if you must write one), use `human-{chatJid}-{timestamp}`
+- `status`: One of `success`, `error`, `budget_exceeded`, `timeout`
+- `cost_usd`: Duplicate from cost_log for dispatch convenience
+- `outputs[].type`: Must be one of `slack_message`, `github_pr`, `linear_ticket`, `drive_doc`, `file`, `other`
+- `inputs`: Cron tasks include `{ task_id, group_folder, scheduled_at }`. Add task-specific fields as needed.
+- `audit_entry`: Pre-format this one-liner for the Audit Trail step (see below)
+- `cross_loop_signals`: Leave empty `[]` unless you have signals to pass to dispatch
+
+## Audit Trail
+
+After writing the completion record, post the `audit_entry` field to #fleet-ops using the daily thread pattern.
+
+**Format:** `[ISO timestamp] [trigger] agent-name: action -- artifact_link -- $cost`
+
+- Trigger is `[cron]` for autonomous scheduled tasks, `[human]` for human-triggered work
+- Example: `[2026-03-30 10:00] [cron] qa-sentinel: reviewed PR#42 -- PASS coverage:+2.1% -- $0.12`
+
+### Daily Thread Management
+
+1. Check `/workspace/output/audit-thread-{YYYY-MM-DD}.txt`
+2. If the file **exists**: read `thread_ts` from it, post the audit entry as a reply to that thread
+3. If the file **does not exist**: post the audit entry as a new top-level message to #fleet-ops (channel ID: `C0ANMCMGH54`), then save the returned `thread_ts` to `/workspace/output/audit-thread-{YYYY-MM-DD}.txt`
+
+### IPC Message Format
+
+Write the audit IPC message to `/workspace/ipc/messages/audit-{TIMESTAMP}.json` using the Write tool (NOT echo/bash):
+
+```json
+{
+  "action": "sendMessage",
+  "channelId": "C0ANMCMGH54",
+  "text": "[2026-03-30 10:00] [cron] agent-name: action -- artifact_link -- $0.12",
+  "threadTs": "1234567890.123456"
+}
+```
+
+- Set `threadTs` to the value from `/workspace/output/audit-thread-{YYYY-MM-DD}.txt` if it exists
+- Omit `threadTs` (or set to `null`) when posting the first entry of the day (this creates the thread)
+- After NanoClaw processes the message, the IPC response contains the new thread_ts — save it to the file
+
+## Permission Tiers
+
+Agent groups operate within one of four permission tiers. Tiers are enforced via behavioral instructions only. There are no tool-level restrictions. **Violating your tier is a policy violation.**
+
+The main Fleet agent (this CLAUDE.md) operates without a tier constraint — it responds to human requests directly.
+
+### Tier Definitions
+
+| Tier | Allowed Actions | Prohibited Actions |
+|------|-----------------|--------------------|
+| **READ-ONLY** | Read code, logs, Linear tickets, Drive documents. Post findings to own Slack channel. | Write files, create tickets, open PRs, create Drive docs, send IPC to other groups. |
+| **PROPOSE** | Post messages to assigned Slack channel. Write draft `.md` files to `/workspace/` (proposals, analysis, notes). Read code, logs, Linear tickets, Drive documents. | Create PRs, branches, or commits. Create or update Linear tickets. Create or modify Drive documents (other than workspace drafts). Send IPC messages to another group's channel. Any of the above without explicit human approval. |
+| **ACT** | Branch, commit, push to feature branches. Open PRs. Update Linear ticket status and add comments. All PROPOSE actions. | Merge to main. Deploy to production. Delete data (tickets, branches, records). Destructive Linear actions (delete projects, remove members). |
+| **ORCHESTRATOR** | Read all groups' `/workspace/output/` directories. Post to any Slack channel via IPC. Schedule tasks for other groups. All READ-ONLY actions. | Commit code or create PRs. Modify source files directly. |
+
+### Group Assignments
+
+| Group | Tier | Rationale |
+|-------|------|-----------|
+| qa-sentinel | PROPOSE | Reviews PRs and posts findings — no direct write access to repos |
+| dev-ops | ACT | Manages branches, commits, and Linear tickets for product work |
+| product-brain | PROPOSE | Drafts proposals and analysis — humans promote to action |
+| dispatch | ORCHESTRATOR | Reads all outputs, coordinates across groups, routes signals |
+| dev-team | ACT | Full coding capability — branch, commit, push, PR |

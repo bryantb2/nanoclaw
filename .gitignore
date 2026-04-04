@@ -17,16 +17,28 @@ groups/*
 !groups/slack_main/
 !groups/slack_dev-team/
 !groups/slack_fleet-ops/
+!groups/slack_qa-sentinel/
+!groups/slack_dev-ops/
+!groups/slack_dispatch/
+!groups/slack_product-brain/
 groups/main/*
 groups/global/*
 groups/slack_main/*
 groups/slack_dev-team/*
 groups/slack_fleet-ops/*
+groups/slack_qa-sentinel/*
+groups/slack_dev-ops/*
+groups/slack_dispatch/*
+groups/slack_product-brain/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 !groups/slack_main/CLAUDE.md
 !groups/slack_dev-team/CLAUDE.md
 !groups/slack_fleet-ops/CLAUDE.md
+!groups/slack_qa-sentinel/CLAUDE.md
+!groups/slack_dev-ops/CLAUDE.md
+!groups/slack_dispatch/CLAUDE.md
+!groups/slack_product-brain/CLAUDE.md
 
 # Secrets
 *.keys.json

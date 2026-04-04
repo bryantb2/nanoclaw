@@ -4,9 +4,9 @@
 
 ### Forcify
 - Repo: /workspace/extra/repos/forcify
-- Stack: [Blake fills in — e.g. Next.js, TypeScript, Postgres]
-- Testing: [Blake fills in — e.g. Jest, Playwright]
-- CI: [Blake fills in]
+- Stack: AdonisJS 6 + Inertia.js + React (monolith, not separate backend/frontend)
+- Testing: Japa v4 (@japa/runner) with @testing-library/react, sinon, global-jsdom
+- CI: GitHub Actions (.github/workflows/ci.yml) — lint, typecheck, Japa unit tests with c8 coverage
 
 ### Chaos-Audit
 - Repo: /workspace/extra/repos/Chaos-Audit

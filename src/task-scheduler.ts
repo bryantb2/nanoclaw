@@ -214,6 +214,18 @@ async function runTask(
       result = output.result;
     }
 
+    // FOUND-07: Budget exhaustion is reported as an error with "budget" in the
+    // message. Send a clear Slack notification so operators know the task was
+    // capped — not silently dropped.
+    if (error && /budget/i.test(error)) {
+      const cap = (task.max_budget_usd ?? DEFAULT_MAX_BUDGET_USD).toFixed(2);
+      await deps.sendMessage(
+        task.chat_jid,
+        `[cron] Task \`${task.id}\` reached its $${cap} budget cap and stopped early. ` +
+          `Check #fleet-ops audit trail for partial results. Increase budget or split the task.`,
+      );
+    }
+
     logger.info(
       { taskId: task.id, durationMs: Date.now() - startTime },
       'Task completed',
