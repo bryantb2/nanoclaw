@@ -288,6 +288,8 @@ function drainIpcInput(): string[] {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        // Only consume messages intended for this container's group
+        if (data.groupFolder && data.groupFolder !== containerInput.groupFolder) continue;
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
           messages.push(data.text);
@@ -428,6 +430,7 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            ...(containerInput.threadTs ? { NANOCLAW_THREAD_TS: containerInput.threadTs } : {}),
           },
         },
         ...(sdkEnv.LINEAR_API_KEY ? {
@@ -513,6 +516,9 @@ async function main(): Promise<void> {
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+  }
+  if (containerInput.threadTs) {
+    prompt = `[THREAD CONTEXT: This message was sent in a Slack thread (thread_ts: ${containerInput.threadTs}). When using the send_message tool for progress updates, pass thread_ts="${containerInput.threadTs}" so replies stay in the thread.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
