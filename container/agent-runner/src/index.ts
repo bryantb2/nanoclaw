@@ -276,7 +276,7 @@ function shouldClose(): boolean {
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): string[] {
+function drainIpcInput(groupFolder: string): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
@@ -289,7 +289,7 @@ function drainIpcInput(): string[] {
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         // Only consume messages intended for this container's group
-        if (data.groupFolder && data.groupFolder !== containerInput.groupFolder) continue;
+        if (data.groupFolder && data.groupFolder !== groupFolder) continue;
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
           messages.push(data.text);
@@ -310,14 +310,14 @@ function drainIpcInput(): string[] {
  * Wait for a new IPC message or _close sentinel.
  * Returns the messages as a single string, or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
+function waitForIpcMessage(groupFolder: string): Promise<string | null> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
         resolve(null);
         return;
       }
-      const messages = drainIpcInput();
+      const messages = drainIpcInput(groupFolder);
       if (messages.length > 0) {
         resolve(messages.join('\n'));
         return;
@@ -357,7 +357,7 @@ async function runQuery(
       ipcPolling = false;
       return;
     }
-    const messages = drainIpcInput();
+    const messages = drainIpcInput(containerInput.groupFolder);
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
@@ -520,7 +520,7 @@ async function main(): Promise<void> {
   if (containerInput.threadTs) {
     prompt = `[THREAD CONTEXT: This message was sent in a Slack thread (thread_ts: ${containerInput.threadTs}). When using the send_message tool for progress updates, pass thread_ts="${containerInput.threadTs}" so replies stay in the thread.]\n\n${prompt}`;
   }
-  const pending = drainIpcInput();
+  const pending = drainIpcInput(containerInput.groupFolder);
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
@@ -554,7 +554,7 @@ async function main(): Promise<void> {
       log('Query ended, waiting for next IPC message...');
 
       // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
+      const nextMessage = await waitForIpcMessage(containerInput.groupFolder);
       if (nextMessage === null) {
         log('Close sentinel received, exiting');
         break;
