@@ -202,35 +202,34 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
    ```
    Extract the branch name from the PR URL using `gh pr view {PR_NUMBER} --json headRefName --jq .headRefName`.
 
-2. **Set up Postgres test environment** — create `/workspace/forcify/.env.test`:
+2. **Start local Postgres and set up test environment:**
+   ```bash
+   source /app/start-postgres.sh
+   ```
+   Then create `/workspace/forcify/.env.test`:
    ```
    NODE_ENV=test
    PORT=3333
    HOST=127.0.0.1
    DB_CONNECTION=pg
-   PG_HOST=host.docker.internal
+   PG_HOST=localhost
    PG_PORT=5432
-   PG_USER=nanoclaw
-   PG_PASSWORD={from Infisical or .secrets.env PG_PASSWORD}
+   PG_USER=testuser
+   PG_PASSWORD=testpass
    PG_DB_NAME=forcify_test
    SESSION_DRIVER=memory
    LOG_LEVEL=silent
    APP_KEY={generate with node -e "console.log('base64:' + require('crypto').randomBytes(32).toString('base64'))"}
    ```
-   NOTE: Uses `host.docker.internal` to reach the onecli-postgres-1 container on the host. The container-runner already configures `--add-host host.docker.internal:host-gateway`.
+   The database is ephemeral — created fresh each container run, no cleanup needed.
 
-3. **Create test database if needed:**
-   ```bash
-   PGPASSWORD=$PG_PASSWORD psql -h host.docker.internal -U nanoclaw -c "CREATE DATABASE forcify_test;" 2>/dev/null || true
-   ```
-
-4. **Install deps + run migrations:**
+3. **Install deps + run migrations:**
    ```bash
    cd /workspace/forcify && npm ci --prefer-offline
    node ace migration:run --env=test
    ```
 
-5. **Start server and wait for ready:**
+4. **Start server and wait for ready:**
    ```bash
    NODE_ENV=test node ace serve --port=3333 &
    for i in $(seq 1 20); do
@@ -240,21 +239,21 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
    done
    ```
 
-6. **Run full Japa integration test suite:**
+5. **Run full Japa integration test suite:**
    ```bash
    cd /workspace/forcify && node ace test --reporter=spec 2>&1
    ```
    Capture exit code and full output.
 
-7. **Run Playwright E2E tests:**
+6. **Run Playwright E2E tests:**
    ```bash
    cd /workspace/forcify && npx playwright test 2>&1
    ```
    Capture exit code and full output.
 
-8. **Determine result:** PASS if both Japa and Playwright exit 0. FAIL otherwise. Collect failure details (test name, error message, stack trace snippet).
+7. **Determine result:** PASS if both Japa and Playwright exit 0. FAIL otherwise. Collect failure details (test name, error message, stack trace snippet).
 
-9. **Write completion record** to `/workspace/output/latest.json` with cross_loop_signal:
+8. **Write completion record** to `/workspace/output/latest.json` with cross_loop_signal:
    ```json
    {
      "cross_loop_signals": [{
@@ -270,7 +269,7 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
    }
    ```
 
-10. **Post result to #qa-sentinel:**
+9. **Post result to #qa-sentinel:**
     ```
     [PASS] Build loop QA gate — PR#N validated
     Japa: 42/42 passed | Playwright: 8/8 passed
@@ -283,7 +282,7 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
     Details: [error messages]
     ```
 
-11. **Cleanup:** Kill the background server process. Do NOT drop the test database (reuse across runs).
+10. **Cleanup:** Kill the background server process. The database is ephemeral and destroyed when the container exits.
 
 ## Reactive Behaviors
 

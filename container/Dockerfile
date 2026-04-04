@@ -24,6 +24,9 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    postgresql \
+    postgresql-client \
+    sudo \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -78,6 +81,14 @@ RUN mv /usr/bin/gh /usr/bin/gh.real 2>/dev/null || true
 # Placeholder gh wrapper — replaced at runtime by entrypoint.sh with token routing.
 # This ensures 'gh' is callable even if GITHUB_INSTALLATION_TOKENS is not set.
 RUN printf '#!/bin/bash\nexec /usr/bin/gh.real "$@"\n' > /usr/bin/gh && chmod +x /usr/bin/gh
+
+# Postgres setup: allow node user to start/stop pg via sudo (no password)
+RUN echo "node ALL=(postgres) NOPASSWD: /usr/bin/pg_ctlcluster, /usr/bin/pg_isready, /usr/bin/createdb, /usr/bin/psql" > /etc/sudoers.d/postgres-for-node \
+    && chmod 0440 /etc/sudoers.d/postgres-for-node
+
+# Copy start-postgres script
+COPY start-postgres.sh /app/start-postgres.sh
+RUN chmod +x /app/start-postgres.sh
 
 # Set ownership to node user (non-root) for writable directories
 # Also make /usr/bin/gh writable by node so entrypoint can replace the wrapper
