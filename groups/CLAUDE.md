@@ -189,6 +189,15 @@ Never introduce a new pattern when an existing one covers the case.
 - Run the test suite before reporting completion
 - A task is NOT done until tests pass
 
+### Long-Running Processes
+If a shell command will take more than ~60 seconds (builds, migrations, full test suites, deployments):
+- Run it in the background: `nohup command > /tmp/output.log 2>&1 & echo $! > /tmp/task.pid`
+- Write the PID and log path to a state file (e.g. `/tmp/task-state.json`)
+- Schedule a follow-up check via `mcp__nanoclaw__schedule_task` to tail the log and assess completion
+- Do NOT block the agent context waiting — exit and let the scheduled check report back
+
+This applies equally to processes that call external systems: if the external system won't respond for minutes, use schedule_task rather than polling in-session.
+
 ### Commit Discipline
 - Commit after EVERY logical sub-step, not just at the end
 - Commit message format: type(scope): description (conventional commits)
@@ -236,6 +245,73 @@ The phrase "I'll skip QA since it's a simple change" is forbidden.
 **FORBIDDEN:** Running lint, typecheck, or test commands yourself (via Bash) does NOT satisfy this gate.
 Creating a QA team and immediately deleting it does NOT satisfy this gate.
 Only a named QA subagent that receives the task, runs the checks, and explicitly reports PASS or FAIL satisfies this gate.
+
+## Async Work Protocol
+
+Agents must own async work **end-to-end**. Making a promise and exiting without a mechanism to fulfill it is a process violation on par with skipping QA.
+
+### When to use `schedule_task` instead of waiting
+
+Any time a task or external system will take more than **~60 seconds** to complete, do NOT poll in a loop or sit idle. Instead:
+1. Trigger the work (push the PR, start the build, kick off the migration, etc.)
+2. Send an immediate update: "Started. Scheduled a check in N minutes — will report back."
+3. Use `mcp__nanoclaw__schedule_task` to queue a follow-up check
+4. Exit the current session
+
+Idle waiting costs ~$0.003/min in burned tokens. A scheduled re-entry costs ~$0.002. Always prefer the latter.
+
+### What triggers this pattern
+
+This is not just for CI. Apply the schedule_task pattern any time:
+- Waiting for CI/CD checks to pass on a PR
+- Waiting for a deployment, migration, or build to complete
+- Waiting for an external API to finish async processing (e.g. export job, background worker)
+- Waiting for a human to review something before next steps can proceed
+- Waiting for any process that cannot be polled synchronously in <60s
+
+### The Async Check Pattern
+
+```
+mcp__nanoclaw__schedule_task({
+  prompt: "Check status of <thing>. <How to check>. If complete: <success action>, then call mcp__nanoclaw__list_tasks to find this task's ID, and call mcp__nanoclaw__cancel_task with task_id set to that ID to clean up this scheduled job. If still running: do nothing (this task will re-run on schedule). If failed: <failure action>, attempt to fix, re-trigger, and update the schedule if needed.",
+  schedule_type: "interval",
+  schedule_value: "300000",   // 5 minutes; adjust to the expected wait time
+  context_mode: "group"
+})
+```
+
+**Important:** `schedule_task` returns the task ID in its response (e.g., `Task task-1712345-abc scheduled: ...`). The original agent should note this ID. However, the scheduled run does NOT automatically know its own task ID — it must call `mcp__nanoclaw__list_tasks` to discover it (match by prompt content or schedule pattern), then use that ID with `mcp__nanoclaw__cancel_task` to clean up.
+
+### Async Completion = Cleanup Required
+
+When the completion condition is met inside a scheduled run:
+1. Perform the completion action (post success to Slack, update Linear, etc.)
+2. **Immediately call `mcp__nanoclaw__cancel_task`** to cancel the interval
+3. Do NOT leave recurring checks running after the work is done
+
+Orphaned cron jobs — intervals that keep firing after their work is complete — are a bug. A completed PR that still has a CI-check job running wastes budget and creates noise.
+
+### End-to-End Ownership
+
+An agent owns a task until the **outcome** is verified, not until the **action** is taken:
+
+| Action taken | Not done until |
+|---|---|
+| `gh pr create` | CI passes AND reviewer notified |
+| `git push` + deploy trigger | Deployment health check passes |
+| Database migration script run | Data integrity verified |
+| "Kicked off export job" | Export file exists and is valid |
+| "Waiting for approval in Linear" | Ticket status confirms approval |
+
+### Fire-and-Forget is FORBIDDEN
+
+The following are process violations:
+- Saying "I'll monitor CI and let you know" then exiting without a `schedule_task`
+- Sending "PR is up, checks are running" as a final message without a scheduled follow-up
+- Polling in-session for >60s when a schedule_task would serve the same purpose
+- Leaving a scheduled interval job running after the completion condition is met
+
+Before exiting after any async promise: confirm a `schedule_task` exists to fulfill it.
 
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
