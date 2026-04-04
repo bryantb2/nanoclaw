@@ -71,6 +71,30 @@ export { escapeXml, formatMessages } from './router.js';
 /** @internal — exported for testing only */
 export { runAgent as _runAgent };
 
+/**
+ * Select the message whose ID should be used as thread_ts for replies.
+ * Main groups: latest message (all messages trigger processing).
+ * Non-main groups: latest message matching the trigger pattern + allowlist.
+ * @internal — exported for testing
+ */
+export function selectThreadMessage(
+  messages: NewMessage[],
+  isMain: boolean,
+  chatJid: string,
+  triggerPattern: RegExp,
+  allowlistChecker: (chatJid: string, sender: string, cfg: ReturnType<typeof loadSenderAllowlist>) => boolean,
+  allowlistLoader: () => ReturnType<typeof loadSenderAllowlist>,
+): NewMessage | undefined {
+  if (messages.length === 0) return undefined;
+  if (isMain) return messages[messages.length - 1];
+  const cfg = allowlistLoader();
+  return [...messages].reverse().find(
+    (m) =>
+      triggerPattern.test(m.content.trim()) &&
+      (m.is_from_me || allowlistChecker(chatJid, m.sender, cfg)),
+  );
+}
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -214,17 +238,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
-  // Find the last trigger message to use as thread_ts for threading replies
-  const allowlistCfgForThread = loadSenderAllowlist();
-  const triggerMessage = [...missedMessages]
-    .reverse()
-    .find(
-      (m) =>
-        TRIGGER_PATTERN.test(m.content.trim()) &&
-        (m.is_from_me ||
-          isTriggerAllowed(chatJid, m.sender, allowlistCfgForThread)),
-    );
-  const threadTs = triggerMessage?.id;
+  const threadMsg = selectThreadMessage(
+    missedMessages, isMainGroup, chatJid, TRIGGER_PATTERN, isTriggerAllowed, loadSenderAllowlist,
+  );
+  const threadTs = threadMsg?.id;
   if (threadTs) latestThreadTs[chatJid] = threadTs;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -403,7 +420,13 @@ async function runAgent(
         maxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
       },
       (proc, containerName, resetTimeout) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder, resetTimeout),
+        queue.registerProcess(
+          chatJid,
+          proc,
+          containerName,
+          group.folder,
+          resetTimeout,
+        ),
       wrappedOnOutput,
     );
 
@@ -565,11 +588,10 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          // Update thread_ts to the latest trigger message for this group
-          const pipedTrigger = [...messagesToSend]
-            .reverse()
-            .find((m) => TRIGGER_PATTERN.test(m.content.trim()));
-          if (pipedTrigger) latestThreadTs[chatJid] = pipedTrigger.id;
+          const pipedThreadMsg = selectThreadMessage(
+            messagesToSend, isMainGroup, chatJid, TRIGGER_PATTERN, isTriggerAllowed, loadSenderAllowlist,
+          );
+          if (pipedThreadMsg) latestThreadTs[chatJid] = pipedThreadMsg.id;
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
