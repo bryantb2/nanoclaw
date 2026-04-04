@@ -273,14 +273,14 @@ This is not just for CI. Apply the schedule_task pattern any time:
 
 ```
 mcp__nanoclaw__schedule_task({
-  prompt: "[ASYNC_TASK_ID: <unique-id>] Check status of <thing>. <How to check>. If complete: <success action>, then call mcp__nanoclaw__cancel_task with taskId '<unique-id>' to clean up this scheduled job. If still running: do nothing (this task will re-run on schedule). If failed: <failure action>, attempt to fix, re-trigger, and update the schedule if needed.",
+  prompt: "Check status of <thing>. <How to check>. If complete: <success action>, then call mcp__nanoclaw__list_tasks to find this task's ID, and call mcp__nanoclaw__cancel_task with task_id set to that ID to clean up this scheduled job. If still running: do nothing (this task will re-run on schedule). If failed: <failure action>, attempt to fix, re-trigger, and update the schedule if needed.",
   schedule_type: "interval",
   schedule_value: "300000",   // 5 minutes; adjust to the expected wait time
   context_mode: "group"
 })
 ```
 
-Always embed the task ID in the prompt using `[ASYNC_TASK_ID: <id>]` so the scheduled run can cancel itself when done.
+**Important:** `schedule_task` returns the task ID in its response (e.g., `Task task-1712345-abc scheduled: ...`). The original agent should note this ID. However, the scheduled run does NOT automatically know its own task ID — it must call `mcp__nanoclaw__list_tasks` to discover it (match by prompt content or schedule pattern), then use that ID with `mcp__nanoclaw__cancel_task` to clean up.
 
 ### Async Completion = Cleanup Required
 
