@@ -43,6 +43,7 @@ source /app/start-postgres.sh
 cd /workspace/extra/repos/forcify
 npm ci --prefer-offline
 node ace migration:run --env=test
+node ace db:seed --env=test
 node ace test --reporter=spec
 ```
 

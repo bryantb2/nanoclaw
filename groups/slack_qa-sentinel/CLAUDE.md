@@ -223,11 +223,13 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
    ```
    The database is ephemeral — created fresh each container run, no cleanup needed.
 
-3. **Install deps + run migrations:**
+3. **Install deps, run migrations, and seed data:**
    ```bash
    cd /workspace/forcify && npm ci --prefer-offline
    node ace migration:run --env=test
+   node ace db:seed --env=test
    ```
+   Seeding creates test users, orgs, projects, equipment, crews, and tasks. Login with `steve@krewtrack.com` / `password`.
 
 4. **Start server and wait for ready:**
    ```bash

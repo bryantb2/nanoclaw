@@ -168,13 +168,16 @@ An ephemeral PostgreSQL server is available inside this container. Use it for in
 source /app/start-postgres.sh
 ```
 
-This starts PostgreSQL on `localhost:5432`, creates a `forcify_test` database, and exports all `PG_*` env vars. After sourcing, you can run migrations and start the app:
+This starts PostgreSQL on `localhost:5432`, creates a `forcify_test` database, and exports all `PG_*` env vars. After sourcing, you can run migrations, seed data, and start the app:
 
 ```bash
 cd /path/to/project
 node ace migration:run --env=test
+node ace db:seed --env=test
 NODE_ENV=test node ace serve --port=3333 &
 ```
+
+**Test login credentials** (created by db:seed): `steve@krewtrack.com` / `password`
 
 The database is fully ephemeral — it's destroyed when the container exits. No cleanup needed.
 
