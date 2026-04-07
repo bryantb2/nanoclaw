@@ -40,10 +40,10 @@ for group in "${GROUPS[@]}"; do
 
     if [ -d "$REPO_DIR/.git" ]; then
       echo "  $REPO_NAME: exists, fetching latest..."
-      cd "$REPO_DIR" && git fetch origin && cd - > /dev/null
+      (cd "$REPO_DIR" && git fetch origin) || echo "  WARNING: fetch failed for $REPO_NAME"
     else
       echo "  $REPO_NAME: cloning..."
-      gh repo clone "$repo" "$REPO_DIR" -- --depth=1
+      gh repo clone "$repo" "$REPO_DIR" || echo "  WARNING: clone failed for $REPO_NAME"
     fi
   done
 

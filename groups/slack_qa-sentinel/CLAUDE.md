@@ -349,20 +349,21 @@ When posting screenshots to GitHub PR comments, images MUST be embedded as actua
    # Use Playwright or similar to capture screenshots
    ```
 
-2. **Create a GitHub release for hosting:**
+2. **Create a GitHub release for hosting** (use the actual repo the PR belongs to — `Krewtrack/forcify` shown as example):
    ```bash
+   REPO="Krewtrack/forcify"  # set to the actual repo for this PR
    TAG="qa-screenshots-$(date +%s)"
-   gh release create "$TAG" --repo Krewtrack/forcify --title "QA Screenshots $(date +%Y-%m-%d)" --notes "Automated QA screenshots" --latest=false
+   gh release create "$TAG" --repo "$REPO" --title "QA Screenshots $(date +%Y-%m-%d)" --notes "Automated QA screenshots" --latest=false
    ```
 
 3. **Upload screenshots as release assets:**
    ```bash
-   gh release upload "$TAG" /workspace/output/screenshots/*.png --repo Krewtrack/forcify
+   gh release upload "$TAG" /workspace/output/screenshots/*.png --repo "$REPO"
    ```
 
 4. **Get download URLs for each asset:**
    ```bash
-   gh release view "$TAG" --repo Krewtrack/forcify --json assets --jq '.assets[] | "\(.name) \(.url)"'
+   gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | "\(.name) \(.url)"'
    ```
 
 5. **Post PR comment with inline images using the download URLs:**
@@ -370,7 +371,7 @@ When posting screenshots to GitHub PR comments, images MUST be embedded as actua
    ## QA Verification — PR #N
 
    ### Feature: [description]
-   ![Screenshot description](https://github.com/Krewtrack/forcify/releases/download/{TAG}/screenshot-name.png)
+   ![Screenshot description](https://github.com/{REPO}/releases/download/{TAG}/screenshot-name.png)
    ```
 
 6. **Verify the comment** — after posting, use `gh pr view {N} --comments` to confirm images render.

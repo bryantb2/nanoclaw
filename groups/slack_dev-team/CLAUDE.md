@@ -55,9 +55,9 @@ Repos are mounted from the host and persist across sessions. Before starting any
 ```bash
 cd /workspace/extra/repos/forcify
 git fetch origin
-git checkout master && git pull origin master
+git checkout master && git pull origin master  # use main if that's the repo's default branch
 ```
-Do this for whichever repo you're about to work on. If a prior session left uncommitted changes, stash or commit them first.
+Do this for whichever repo you're about to work on. Use the repo's default branch (`master` or `main`). If a prior session left uncommitted changes, stash or commit them first.
 
 ## Conventions
 - All PRs require test coverage for new logic
@@ -94,7 +94,7 @@ for i in $(seq 1 30); do
   sleep 20
 done
 ```
-If CI fails, fix the issue and push. Do NOT leave a PR open with failing CI.
+If CI fails, fix the issue and push. Then **re-run this polling loop from the beginning** to verify the fix. Do NOT leave a PR open with failing CI. Do NOT declare the task done until CI is green.
 
 ### 2. Post Linear PR comment
 If working on a Linear ticket, post a comment to the ticket after the PR is open and CI is green:
@@ -127,16 +127,8 @@ Write to `/workspace/output/latest.json` per the global CLAUDE.md schema. Includ
 }
 ```
 
-### 4. QA handoff (UI PRs only)
-For PRs with UI changes, write an IPC message to trigger QA:
-```json
-{
-  "type": "message",
-  "chatJid": "{QA_SENTINEL_CHANNEL_JID}",
-  "text": "[DISPATCH-ROUTED] QA gate requested for PR #{N} ({PR_URL}). Branch: {BRANCH}. Linear: {TICKET_ID}. Validate UI changes, take screenshots, and post as PR comments with embedded images."
-}
-```
-Write to `/workspace/ipc/messages/qa-handoff-{TIMESTAMP}.json` using the Write tool (NOT echo/bash).
+### 4. QA routing
+Do NOT send IPC messages directly to QA. Dispatch handles all QA routing via its build loop — it reads your `pr_ready_for_review` signal from the completion record and routes to QA automatically. Set `has_ui_changes: true` in the signal payload so dispatch knows to request screenshots.
 
 ## Learned Context
 (Fleet adds entries here as it learns about your codebase)
