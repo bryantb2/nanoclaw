@@ -200,7 +200,7 @@ For each ticket in state with `stage: "waiting_for_pr"`:
 - Write IPC message to #qa-sentinel to run the QA gate on the PR:
 
 ```json
-{ "type": "message", "chatJid": "QA_SENTINEL_CHANNEL_JID", "text": "QA gate requested for build loop PR.\n\nPR URL: {PR_URL}\nLinear ticket: {TICKET_URL}\nTicket ID: {TICKET_ID}\n\nPlease run the Build Loop QA Gate procedure from your CLAUDE.md. Boot forcify with Postgres, run full Japa + Playwright suite against the PR branch, and write qa_result to your completion record." }
+{ "type": "message", "chatJid": "QA_SENTINEL_CHANNEL_JID", "text": "[DISPATCH-ROUTED] QA gate requested for build loop PR.\n\nPR URL: {PR_URL}\nLinear ticket: {TICKET_URL}\nTicket ID: {TICKET_ID}\n\nPlease run the Build Loop QA Gate procedure from your CLAUDE.md. Boot forcify with Postgres, run full Japa + Playwright suite against the PR branch, take screenshots of any UI changes (use the GitHub PR Screenshot Protocol in your CLAUDE.md), and write qa_result to your completion record." }
 ```
 
 Written to `/workspace/ipc/messages/route-{TIMESTAMP}.json`.
@@ -220,7 +220,7 @@ For each ticket in state with `stage: "waiting_for_qa"`:
     - Write IPC to #dev-team with failure details:
 
 ```json
-{ "type": "message", "chatJid": "DEV_TEAM_CHANNEL_JID", "text": "QA gate FAILED for {TICKET_ID}.\n\nPR: {PR_URL}\nFailures:\n{DETAILS}\n\nPlease fix the issues and push a new commit to the same branch. QA gate will re-run on the next dispatch poll cycle." }
+{ "type": "message", "chatJid": "DEV_TEAM_CHANNEL_JID", "text": "[DISPATCH-ROUTED] QA gate FAILED for {TICKET_ID}.\n\nPR: {PR_URL}\nFailures:\n{DETAILS}\n\nPlease fix the issues and push a new commit to the same branch. After pushing fixes, verify CI passes, then write a completion record with pr_ready_for_review signal. QA gate will re-run on the next dispatch poll cycle." }
 ```
     - Revert ticket in state to `stage: "waiting_for_pr"`, clear `pr_url` and `qa_dispatched_at`
 
@@ -244,7 +244,7 @@ For each new ticket not already in state:
 - Write IPC message to #dev-team:
 
 ```json
-{ "type": "message", "chatJid": "DEV_TEAM_CHANNEL_JID", "text": "New ticket for build loop.\n\nTicket: {TITLE} ({URL})\nTicket ID: {ID}\n\nDescription:\n{DESCRIPTION}\n\nContext from recent completion records:\n{RELEVANT_CONTEXT}\n\nPlease implement, commit to a feature branch, and open a PR. Write a cross_loop_signal of type pr_ready_for_review in your completion record when the PR is ready." }
+{ "type": "message", "chatJid": "DEV_TEAM_CHANNEL_JID", "text": "[DISPATCH-ROUTED] New ticket for build loop.\n\nTicket: {TITLE} ({URL})\nTicket ID: {ID}\n\nDescription:\n{DESCRIPTION}\n\nContext from recent completion records:\n{RELEVANT_CONTEXT}\n\nPlease implement, commit to a feature branch, and open a PR. After PR is open and CI passes, write a completion record to /workspace/output/latest.json with a cross_loop_signal of type pr_ready_for_review (include pr_url, pr_number, branch, linear_ticket_id, ci_status, has_ui_changes). For UI changes, also write an IPC message to QA per the Post-PR Protocol in your CLAUDE.md." }
 ```
 
 Written to `/workspace/ipc/messages/route-{TIMESTAMP}.json`.
@@ -310,7 +310,7 @@ When you receive `@Fleet reject recommendation #N -- {reason}`:
 When a human posts a Linear ticket URL to #dispatch (e.g., `https://linear.app/...`):
 1. Fetch ticket details via Linear GraphQL
 2. Add to build loop state as `waiting_for_pr` with `dispatched_at: now`
-3. Write IPC to #dev-team with ticket details (same format as automated intake in Task C Step 5)
+3. Write IPC to #dev-team with ticket details (same format as automated intake in Task C Step 5 — must include `[DISPATCH-ROUTED]` tag)
 4. Acknowledge in #dispatch: "Ticket {TITLE} added to build loop. Routing to dev-team now."
 
 When addressed directly by name (e.g., "Blake needs X"):
@@ -320,6 +320,33 @@ When addressed directly by name (e.g., "Blake needs X"):
 
 ---
 
+## Dispatch-Routed Tag (MANDATORY)
+
+ALL IPC messages routed to other groups MUST start with `[DISPATCH-ROUTED]` in the text field. This tag tells the receiving agent to:
+- Treat the task as autonomous (not human-triggered)
+- Write a completion record when done
+- Include cross_loop_signals for dispatch to read
+
+Without this tag, receiving agents may skip completion records and the build loop will lose track of task status.
+
+## Scheduled Task Manifest (MANDATORY)
+
+After any session that creates, modifies, or deletes cron jobs (via `schedule_task`), post a manifest to #fleet-ops listing all active scheduled tasks:
+
+```
+Scheduled Task Manifest — {DATE}
+
+| Task | Schedule | Budget | Target Channel | Purpose |
+|------|----------|--------|----------------|---------|
+| PR Coverage Poll | Every 2h | $3 | #qa-sentinel | Detect coverage regressions |
+| QA Nightly | 2:00 AM daily | $3 | #qa-sentinel | Click-through + code sweep |
+| ... | ... | ... | ... | ... |
+
+Changes this session: [list what was added/modified/removed]
+```
+
+This prevents operator blindness on active automation. Use the file delivery protocol (global CLAUDE.md) if the manifest exceeds 10 rows.
+
 ## Constraints
 
 - Do not implement work — synthesize, recommend, and route only
@@ -327,7 +354,7 @@ When addressed directly by name (e.g., "Blake needs X"):
 - Budget caps per task type: daily digest $3, weekly recommendation $5, build loop poll $3
 - IPC message format for routing to other groups — use `type: "message"` + `chatJid` (NOT `action: "sendMessage"` + `channelId` — that format is for the uploadFile handler only):
   ```json
-  { "type": "message", "chatJid": "<CHANNEL_ID>", "text": "message content" }
+  { "type": "message", "chatJid": "<CHANNEL_ID>", "text": "[DISPATCH-ROUTED] message content" }
   ```
   Written to `/workspace/ipc/messages/route-{TIMESTAMP}.json` using the Write tool (NOT echo/bash).
 
@@ -351,7 +378,7 @@ This group is registered with `isMain=true` in NanoClaw. That means it responds 
 
 ## Completion Records + Audit Trail
 
-See global CLAUDE.md for the full schema and write steps. Write completion records at the end of every autonomous cron task. Post audit entries to #fleet-ops.
+See global CLAUDE.md for the full schema and write steps. Write completion records at the end of every autonomous task (cron and dispatch-routed). Post audit entries to #fleet-ops.
 
 ---
 
