@@ -260,6 +260,15 @@ This applies equally to processes that call external systems: if the external sy
 - Commit message format: type(scope): description (conventional commits)
 - Never commit commented-out code, debug statements, or TODO placeholders
 
+### Engineer Delegation — Required Prompt Injections
+
+When delegating to an Engineer via SendMessage or Agent, the task prompt **MUST** include these instructions verbatim. Engineers only see their task prompt — rules in this CLAUDE.md are invisible to them.
+
+1. **Commit discipline:** "Commit after each logical step using conventional commit format. Do NOT batch all changes into a single commit at the end."
+2. **CI verification:** "After `gh pr create`, poll CI with `gh run list --branch {branch} --limit 1 --json status,conclusion` every 20s until complete. If CI fails, fix and push before declaring done."
+3. **PR targeting:** "Target the repo's default branch (master or main) unless explicitly told otherwise. Never target a sibling feature branch."
+4. **Completion record:** "After PR is confirmed green, write a completion record to `/workspace/output/latest.json` per the schema in your group CLAUDE.md."
+
 ### Code Review Checklist
 Before creating a PR, QA must verify:
 - Matches existing code style and patterns
@@ -605,9 +614,16 @@ For each Tier 2 finding, use `mcp__linear-server__save_issue` to create a ticket
 
 ## Completion Records
 
-At the end of EVERY autonomous cron task (not human-triggered conversations), write a completion record to `/workspace/output/latest.json` as the LAST action before ending your response.
+At the end of EVERY autonomous task, write a completion record to `/workspace/output/latest.json` as the LAST action before ending your response.
 
-**For human-triggered conversations, do NOT write completion records.**
+This includes:
+- All cron/scheduled tasks
+- All dispatch-routed tasks (messages containing the `[DISPATCH-ROUTED]` tag)
+- All tasks that produce a PR, Linear update, or cross-loop signal
+
+**For direct human-triggered conversations (an operator typing in Slack), do NOT write completion records.**
+
+**How to identify dispatch-routed tasks:** Messages routed from #dispatch contain the `[DISPATCH-ROUTED]` tag at the start. Treat these as autonomous tasks requiring completion records, even though they arrive as Slack messages.
 
 **Cross-loop signals are WRITE-ONLY** — write signals into your own completion record. Only #dispatch reads all records and routes signals. No loop reads another loop's records directly.
 

@@ -335,6 +335,56 @@ On first run, or when `/workspace/linear-metadata.json` is missing or older than
   Proposed fix: Linear ticket FORC-xxx
   ```
 
+## GitHub PR Screenshot Protocol
+
+When posting screenshots to GitHub PR comments, images MUST be embedded as actual URLs — never local file paths.
+
+**NEVER post local file paths** (e.g., `/workspace/output/screenshot.png`) in GitHub comments. They are not accessible outside the container and render as broken images.
+
+### Steps:
+
+1. **Take screenshots**, save to `/workspace/output/screenshots/`:
+   ```bash
+   mkdir -p /workspace/output/screenshots
+   # Use Playwright or similar to capture screenshots
+   ```
+
+2. **Create a GitHub release for hosting** (use the actual repo the PR belongs to — `Krewtrack/forcify` shown as example):
+   ```bash
+   REPO="Krewtrack/forcify"  # set to the actual repo for this PR
+   TAG="qa-screenshots-$(date +%s)"
+   gh release create "$TAG" --repo "$REPO" --title "QA Screenshots $(date +%Y-%m-%d)" --notes "Automated QA screenshots" --latest=false
+   ```
+
+3. **Upload screenshots as release assets:**
+   ```bash
+   gh release upload "$TAG" /workspace/output/screenshots/*.png --repo "$REPO"
+   ```
+
+4. **Get download URLs for each asset:**
+   ```bash
+   gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | "\(.name) \(.url)"'
+   ```
+
+5. **Post PR comment with inline images using the download URLs:**
+   ```markdown
+   ## QA Verification — PR #N
+
+   ### Feature: [description]
+   ![Screenshot description](https://github.com/{REPO}/releases/download/{TAG}/screenshot-name.png)
+   ```
+
+6. **Verify the comment** — after posting, use `gh pr view {N} --comments` to confirm images render.
+
+## Session Startup (Persistent Repos)
+
+Repos are mounted from the host and persist across sessions. Before starting any work, sync to latest:
+```bash
+cd /workspace/extra/repos/forcify
+git fetch origin
+```
+If checking out a PR branch: `git checkout {branch} && git pull origin {branch}`
+
 ## Learned Context
 
 (Fleet adds entries here as it learns about the codebase and processes)

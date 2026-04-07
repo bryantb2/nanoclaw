@@ -49,17 +49,86 @@ node ace test --reporter=spec
 
 If tests fail, fix them before pushing. If a test failure is pre-existing (not caused by your changes), note it in the PR description.
 
+## Session Startup (Persistent Repos)
+
+Repos are mounted from the host and persist across sessions. Before starting any work, sync to latest:
+```bash
+cd /workspace/extra/repos/forcify
+git fetch origin
+git checkout master && git pull origin master  # use main if that's the repo's default branch
+```
+Do this for whichever repo you're about to work on. Use the repo's default branch (`master` or `main`). If a prior session left uncommitted changes, stash or commit them first.
+
 ## Conventions
 - All PRs require test coverage for new logic
 - Commit style: conventional commits (feat/fix/chore/refactor/test/docs)
 - PR description must include: what changed, why, how to test
 - Branch naming: feature/LINEAR-{id} when from Linear tickets
 - Never commit directly to main — always use a branch and PR
+- **PR targeting:** Always target the repo's default branch (master/main). Never target a sibling feature branch.
 
 ## Git Workflow
 - Repos are in /workspace/extra/repos/{name}
 - Use git credential helper at ~/github-credential-helper.sh for GitHub auth (generates fresh GitHub App tokens)
 - Push branches and open PRs via GitHub API or gh CLI
+
+## Post-PR Protocol (MANDATORY)
+
+After opening ANY PR with `gh pr create`, you MUST complete ALL of the following before declaring the task done. A PR is NOT done until CI passes.
+
+### 1. Verify CI passes
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+for i in $(seq 1 30); do
+  STATUS=$(gh run list --branch "$BRANCH" --limit 1 --json status,conclusion --jq '.[0].status' 2>/dev/null)
+  if [ "$STATUS" = "completed" ]; then
+    CONCLUSION=$(gh run list --branch "$BRANCH" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null)
+    if [ "$CONCLUSION" = "success" ]; then
+      echo "CI passed"; break
+    else
+      echo "CI failed — investigate and fix"
+      # Fix failures, push, restart poll
+      break
+    fi
+  fi
+  sleep 20
+done
+```
+If CI fails, fix the issue and push. Then **re-run this polling loop from the beginning** to verify the fix. Do NOT leave a PR open with failing CI. Do NOT declare the task done until CI is green.
+
+### 2. Post Linear PR comment
+If working on a Linear ticket, post a comment to the ticket after the PR is open and CI is green:
+```
+Fleet opened PR #{N}: {PR_URL}
+Branch: {BRANCH}
+CI: passing
+Tests: {X}/{Y} passed
+```
+Use the bot persona style (third-person, no emoji) per global CLAUDE.md Linear rules.
+
+### 3. Write completion record
+Write to `/workspace/output/latest.json` per the global CLAUDE.md schema. Include:
+- `outputs[].type: "github_pr"` with the PR URL
+- `cross_loop_signals` with `pr_ready_for_review` signal:
+```json
+{
+  "cross_loop_signals": [{
+    "signal_type": "pr_ready_for_review",
+    "payload": {
+      "pr_url": "{PR_URL}",
+      "pr_number": {N},
+      "branch": "{BRANCH}",
+      "linear_ticket_id": "{TICKET_ID}",
+      "ci_status": "passed",
+      "has_ui_changes": true
+    },
+    "target_group": "dispatch"
+  }]
+}
+```
+
+### 4. QA routing
+Do NOT send IPC messages directly to QA. Dispatch handles all QA routing via its build loop — it reads your `pr_ready_for_review` signal from the completion record and routes to QA automatically. Set `has_ui_changes: true` in the signal payload so dispatch knows to request screenshots.
 
 ## Learned Context
 (Fleet adds entries here as it learns about your codebase)

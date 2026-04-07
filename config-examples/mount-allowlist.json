@@ -8,7 +8,12 @@
     {
       "path": "~/repos",
       "allowReadWrite": true,
-      "description": "Git repositories"
+      "description": "Per-group persistent repo clones (~/repos/{group}/{repo})"
+    },
+    {
+      "path": "~/nanoclaw/data",
+      "allowReadWrite": false,
+      "description": "Cross-group output reading (dispatch reads other groups' latest.json)"
     },
     {
       "path": "~/Documents/work",
