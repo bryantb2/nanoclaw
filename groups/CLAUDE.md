@@ -88,6 +88,15 @@ You have the `gh` CLI available. Use it for:
 - `gh issue list` — list open issues
 - Always create a PR after completing a ticket. Include: what changed, why, how to test.
 
+### PR → Linear Traceability (REQUIRED)
+After every `gh pr create`, post a comment to the source Linear ticket using `mcp__linear-server__save_comment`:
+- PR URL
+- Branch name
+- Test pass/fail summary (one line — e.g. "Tests: 42 passed, 0 failed" or "Tests: FAILED — see PR body")
+
+Use bot persona style: third-person, no emoji. Example:
+> PR opened: https://github.com/org/repo/pull/42 | Branch: `feature/LINEAR-123-add-auth` | Tests: 37 passed, 0 failed.
+
 ## Linear Integration
 You have the Linear MCP server available. Use it for:
 - Reading ticket details before starting work (get acceptance criteria, context)
@@ -370,6 +379,19 @@ The following are process violations:
 
 Before exiting after any async promise: confirm a `schedule_task` exists to fulfill it.
 
+### Cron Manifest (REQUIRED after creating or modifying scheduled tasks)
+After any session that calls `mcp__nanoclaw__schedule_task`, `mcp__nanoclaw__update_task`, or `mcp__nanoclaw__cancel_task`, post a manifest to #fleet-ops before exiting.
+
+For ≤5 entries, post inline. For >5 entries, write to `/workspace/output/cron-manifest-{date}.md` and use the file delivery protocol.
+
+Manifest format (one row per active task):
+
+| Task name | Schedule | Human-readable | Budget cap | Channel | Purpose |
+|-----------|----------|----------------|------------|---------|---------|
+| nightly-review-fleet-ops | `0 3 * * 1-5` | Weekdays at 3 AM MT | $5.00 | #fleet-ops | Nightly self-improvement review |
+
+Include only currently active tasks (call `mcp__nanoclaw__list_tasks` to get the current state). Do not list tasks that were cancelled in this session.
+
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
 - Simple tasks (bug fixes, test additions, small tweaks): Delegate directly to Engineer without planning overhead
@@ -591,6 +613,8 @@ For each Tier 2 finding, use `mcp__linear-server__save_issue` to create a ticket
   Use `GH_TOKEN=$(~/github-credential-helper.sh)` in the push command.
   NEVER embed resolved token values (e.g. `ghs_...` strings) directly in task prompts or SendMessage content.
   Resolved tokens are logged permanently in session transcripts — use the helper reference instead.
+- When sending a task prompt to any Engineer subagent, always include this instruction verbatim:
+  "Commit after each logical step using conventional commit format. Do NOT batch all changes into a single commit at the end."
 
 ### Linear Policy
 - You may read any ticket, project, or issue freely
