@@ -566,6 +566,30 @@ async function main(): Promise<void> {
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
+
+    // Detect budget/credit exhaustion and notify the channel before exiting
+    const isBudgetError = /budget|credit|billing|payment|quota|limit exceeded|overloaded|529|402/i.test(errorMessage);
+    if (isBudgetError) {
+      try {
+        const messagesDir = '/workspace/ipc/messages';
+        fs.mkdirSync(messagesDir, { recursive: true });
+        const filename = `${Date.now()}-budget-exhausted.json`;
+        const payload = {
+          type: 'message',
+          chatJid: containerInput.chatJid,
+          text: `Budget exhausted — cannot process this task. Task: ${containerInput.prompt.slice(0, 120)}${containerInput.prompt.length > 120 ? '…' : ''}. Retry after limit resets.`,
+          groupFolder: containerInput.groupFolder,
+          timestamp: new Date().toISOString(),
+        };
+        const tmp = `${messagesDir}/${filename}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+        fs.renameSync(tmp, `${messagesDir}/${filename}`);
+        log('Budget exhaustion notification written to IPC messages');
+      } catch (notifyErr) {
+        log(`Failed to write budget notification: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
+      }
+    }
+
     writeOutput({
       status: 'error',
       result: null,
