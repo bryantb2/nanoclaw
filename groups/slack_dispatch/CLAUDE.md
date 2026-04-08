@@ -161,7 +161,7 @@ Action: [recommended action]
 
 This is the flagship orchestration loop. Dispatch maintains state across 30-minute polling cycles to track in-flight tickets from Linear intake through QA gate to final "In Review" handoff.
 
-**Build loop state file:** `/workspace/build-loop-state.json`
+**Build loop state file:** `/workspace/output/build-loop-state.json`
 
 **State schema:**
 ```json
@@ -187,7 +187,7 @@ This is the flagship orchestration loop. Dispatch maintains state across 30-minu
 
 **Step 1: Load state**
 ```bash
-cat /workspace/build-loop-state.json 2>/dev/null || echo '{"schema_version":"1.0","updated_at":"","in_flight":[],"completed":[]}'
+cat /workspace/output/build-loop-state.json 2>/dev/null || echo '{"schema_version":"1.0","updated_at":"","in_flight":[],"completed":[]}'
 ```
 If state file is missing or malformed, start with empty in_flight.
 
@@ -250,11 +250,29 @@ For each new ticket not already in state:
 Written to `/workspace/ipc/messages/route-{TIMESTAMP}.json`.
 
 **Step 6: Save updated state**
-Write updated state JSON to `/workspace/build-loop-state.json` (overwrite).
+Write updated state JSON to `/workspace/output/build-loop-state.json` (overwrite).
 
-**Step 7: Write completion record and post audit entry**
+**Step 7: Write completion record and post status (if activity)**
 
-Only write completion record if there was actual activity (new tickets, stage transitions, QA results). If nothing changed from poll to poll, skip the completion record to avoid noise.
+Only write a completion record AND post to #dispatch if there was actual activity this cycle (new tickets dispatched, stage transitions, QA results received). **If nothing changed from the previous poll, do NOT post to #dispatch and do NOT write a completion record.** Silence means the loop is healthy and idle.
+
+**Posting rules for build loop polls:**
+- **Quiet poll (no changes):** No message to #dispatch. No completion record. No audit entry. Silence = healthy.
+- **Active poll (stage transitions, new tickets, QA results):** Post ONE concise message to #dispatch summarizing what changed. Do NOT post a separate audit entry to #dispatch — audit entries go to #fleet-ops only.
+- **Never post two messages for the same poll cycle.** One message maximum per poll.
+
+**Format for active polls:**
+```
+Build Loop — {TIME}
+
+{WHAT_CHANGED}
+• KRE-227: waiting_for_pr → waiting_for_qa (QA gate dispatched)
+• KRE-300: new ticket → waiting_for_pr (dispatched to dev-team)
+
+In-flight: {N} | Completed this cycle: {N}
+```
+
+Keep it short. Operators scan #dispatch for actionable updates, not operational telemetry.
 
 ---
 
