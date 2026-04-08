@@ -972,7 +972,12 @@ async function main(): Promise<void> {
       return channel.sendMessage(jid, text, threadOpts);
     },
     injectMessage: (chatJid, text, senderName) => {
-      const ts = String(Date.now() / 1000);
+      // Use ISO 8601 timestamp — must match the format used by Slack channel
+      // messages and router_state.last_timestamp. getNewMessages compares
+      // timestamps as strings (WHERE timestamp > ?), so epoch format
+      // (e.g. "1775673241") is lexicographically less than ISO format
+      // (e.g. "2026-04-08T...") and would never be picked up.
+      const ts = new Date().toISOString();
       const rand = Math.random().toString(36).slice(2, 8);
       storeMessage({
         id: `ipc-${ts}-${rand}`,
