@@ -16,6 +16,13 @@ export interface IpcDeps {
     text: string,
     opts?: { threadTs?: string },
   ) => Promise<void>;
+  /**
+   * Store a message in the DB and enqueue the target group for processing.
+   * Used by IPC routing so dispatch-routed messages trigger container spawns.
+   * Bot-posted Slack messages are filtered by getNewMessages (is_bot_message=0),
+   * so IPC must inject messages directly to bypass that filter.
+   */
+  injectMessage?: (chatJid: string, text: string, senderName: string) => void;
   uploadFile: (params: {
     channelId: string;
     filePath: string;
@@ -85,28 +92,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(
-                    data.chatJid,
-                    data.text,
-                    data.threadTs ? { threadTs: data.threadTs } : undefined,
-                  );
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
+              const msgResult = await processMessageIpc(
+                data,
+                sourceGroup,
+                isMain,
+                registeredGroups,
+                deps,
+              );
+              if (msgResult !== 'skipped') {
+                // Message was handled (sent or unauthorized) — skip other checks
               } else if (
                 data.action === 'uploadFile' &&
                 data.channelId &&
@@ -204,6 +198,43 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   processIpcFiles();
   logger.info('IPC watcher started (per-group namespaces)');
+}
+
+/**
+ * Process a single IPC message routing request.
+ * Extracted for testability — called by the file-scanning loop.
+ */
+export async function processMessageIpc(
+  data: { type: string; chatJid?: string; text?: string; threadTs?: string },
+  sourceGroup: string,
+  isMain: boolean,
+  registeredGroups: Record<string, RegisteredGroup>,
+  deps: Pick<IpcDeps, 'sendMessage' | 'injectMessage'>,
+): Promise<'sent' | 'unauthorized' | 'skipped'> {
+  if (!(data.type === 'message' && data.chatJid && data.text)) {
+    return 'skipped';
+  }
+  const targetGroup = registeredGroups[data.chatJid];
+  if (!(isMain || (targetGroup && targetGroup.folder === sourceGroup))) {
+    logger.warn(
+      { chatJid: data.chatJid, sourceGroup },
+      'Unauthorized IPC message attempt blocked',
+    );
+    return 'unauthorized';
+  }
+  await deps.sendMessage(
+    data.chatJid,
+    data.text,
+    data.threadTs ? { threadTs: data.threadTs } : undefined,
+  );
+  if (deps.injectMessage) {
+    deps.injectMessage(data.chatJid, data.text, `ipc:${sourceGroup}`);
+  }
+  logger.info(
+    { chatJid: data.chatJid, sourceGroup },
+    'IPC message sent',
+  );
+  return 'sent';
 }
 
 export async function processTaskIpc(
