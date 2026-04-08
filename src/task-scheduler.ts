@@ -57,7 +57,11 @@ export function computeNextRun(task: ScheduledTask): string | null {
     }
     // Anchor to the scheduled time, not now, to prevent drift.
     // Skip past any missed intervals so we always land in the future.
-    let next = new Date(task.next_run!).getTime() + ms;
+    // If next_run is NULL (e.g. task created without it), fall back to now.
+    const anchor = task.next_run
+      ? new Date(task.next_run).getTime()
+      : now;
+    let next = anchor + ms;
     while (next <= now) {
       next += ms;
     }
@@ -265,6 +269,23 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   }
   schedulerRunning = true;
   logger.info('Scheduler loop started');
+
+  // Repair active tasks with NULL next_run — these were created by
+  // code paths that bypassed next_run computation (e.g. direct DB inserts
+  // during deployment). Without next_run, getDueTasks skips them silently.
+  const allTasks = getAllTasks();
+  for (const task of allTasks) {
+    if (task.status === 'active' && !task.next_run) {
+      const nextRun = computeNextRun(task);
+      if (nextRun) {
+        updateTask(task.id, { next_run: nextRun });
+        logger.info(
+          { taskId: task.id, nextRun },
+          'Repaired NULL next_run on active task',
+        );
+      }
+    }
+  }
 
   const loop = async () => {
     try {

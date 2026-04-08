@@ -310,3 +310,64 @@ describe('budget exhaustion notification', () => {
     expect(budgetCall![1]).toContain('$5.00');
   });
 });
+
+describe('computeNextRun', () => {
+  it('returns next cron time for cron tasks', () => {
+    const result = computeNextRun({
+      id: 'test',
+      group_folder: 'main',
+      chat_jid: 'g@g.us',
+      prompt: 'test',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      last_run: null,
+      last_result: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result).not.toBeNull();
+    expect(new Date(result!).getTime()).toBeGreaterThan(Date.now() - 1000);
+  });
+
+  it('handles NULL next_run for interval tasks without crashing', () => {
+    const result = computeNextRun({
+      id: 'test-interval',
+      group_folder: 'main',
+      chat_jid: 'g@g.us',
+      prompt: 'test',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: null,
+      last_run: null,
+      last_result: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result).not.toBeNull();
+    // Should be ~60s in the future (anchored to now since next_run is null)
+    const delta = new Date(result!).getTime() - Date.now();
+    expect(delta).toBeGreaterThan(50000);
+    expect(delta).toBeLessThan(70000);
+  });
+
+  it('returns null for once tasks', () => {
+    const result = computeNextRun({
+      id: 'test-once',
+      group_folder: 'main',
+      chat_jid: 'g@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2024-06-01T00:00:00.000Z',
+      last_run: null,
+      last_result: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result).toBeNull();
+  });
+});
