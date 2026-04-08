@@ -145,6 +145,36 @@ Behave accordingly:
 - **Never exit silently after completing meaningful work.** Completion records are for machines. Slack summaries are for humans. Both are required.
 - **One message per completed unit of work.** Don't post progress updates followed by a summary — just the summary.
 
+### Slack Communication Protocol (ALL agents)
+
+There are TWO ways your output reaches Slack — know when to use each:
+
+1. **Container stdout (automatic):** Your normal text responses are posted to the channel automatically by NanoClaw. This works for human-triggered conversations. **However, cron/scheduled tasks have `suppress_output` enabled — your stdout is NOT posted.** You must use IPC instead.
+
+2. **IPC sendMessage (deliberate):** Write a JSON file to `/workspace/ipc/messages/` to post a message to any channel. This is the ONLY way to post from suppressed cron tasks. Use the Write tool (NOT echo/bash):
+   ```json
+   // Write to /workspace/ipc/messages/notify-{TIMESTAMP}.json
+   {
+     "type": "message",
+     "chatJid": "{CHANNEL_JID}",
+     "text": "your message here"
+   }
+   ```
+
+**When to use IPC sendMessage:**
+- All cron/scheduled task output (your stdout is suppressed)
+- Cross-channel notifications (e.g., posting audit entries to #fleet-ops from a dev-team task)
+- Posting to a channel different from the one you're running in
+
+**When stdout is fine (no IPC needed):**
+- Human-triggered conversations (stdout goes to the channel naturally)
+- Dispatch-routed tasks that are NOT cron jobs (the container was triggered by enqueueMessageCheck, not the scheduler)
+
+**Output files for audit/operations (not Slack):**
+- `/workspace/output/latest.json` — completion records (machines read these)
+- `/workspace/output/archive/` — historical completion records
+- `/workspace/output/build-loop-state.json` — dispatch build loop state (dispatch only)
+
 ### Scheduled Task Preamble (REQUIRED for all cron/automated sessions)
 At the start of every scheduled task, before doing any substantive work:
 1. Identify all external dependencies the task requires (API tokens, credentials, external services)
