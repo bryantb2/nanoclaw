@@ -133,7 +133,11 @@ At the start of every scheduled task, before doing any substantive work:
 1. Identify all external dependencies the task requires (API tokens, credentials, external services)
 2. Verify each dependency is available (env var is set, service responds, file exists)
 3. If any required dependency is missing: immediately post a failure notification to the relevant Slack channel and exit — do NOT proceed with the task
-4. If all dependencies are present: proceed normally
+4. **Check for stale in-progress work:** call `mcp__nanoclaw__list_tasks` and scan for any tasks with status `in_progress` that belong to this group. For each stale task found:
+   - If it can be resumed (e.g. a PR is still open, a build is still running): resume it before starting new work
+   - If it is clearly abandoned (PR merged, branch deleted, ticket closed): post a brief note to the relevant Slack channel ("Task `{name}` marked abandoned — original work completed or superseded") and cancel it via `mcp__nanoclaw__cancel_task`
+   - Do NOT silently leave orphaned in-progress tasks — they block accurate status reporting
+5. If all dependencies are present and no stale work requires attention: proceed normally
 
 Fast failure beats slow failure. A task that exits in 10 seconds with a clear error message is better than one that runs for an hour before discovering it cannot complete.
 
@@ -379,6 +383,18 @@ The following are process violations:
 - Leaving a scheduled interval job running after the completion condition is met
 
 Before exiting after any async promise: confirm a `schedule_task` exists to fulfill it.
+
+## Session Length and Context Drift
+
+Long-running sessions accumulate context that degrades decision quality and inflates costs. At **50 conversation turns**, treat the session as full:
+
+1. Summarize current state: what was completed, what is in-progress, what is blocked, any open PRs or Linear tickets
+2. Post the summary to the relevant Slack channel as a handoff note
+3. Exit cleanly — do not start new work items
+
+NanoClaw will spawn a fresh container on the next trigger. The handoff summary gives the new session enough context to resume without re-reading the full history.
+
+**Why 50 turns:** The 12-day / 565-message incident (2026-04-06) showed that sessions left uncapped drift toward reduced coherence, higher cache costs, and instructions that accumulate contradictions. 50 turns is the intervention threshold — not a hard crash, but a planned handoff.
 
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
