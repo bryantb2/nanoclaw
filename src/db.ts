@@ -428,9 +428,9 @@ export function createTask(
         });
         nextRun = interval.next().toISOString();
       } catch {
-        logger.warn(
+        logger.error(
           { taskId: task.id, scheduleValue: task.schedule_value },
-          'createTask: invalid cron expression, next_run will be null',
+          'createTask: invalid cron expression — task will never fire (next_run is null)',
         );
       }
     } else if (task.schedule_type === 'interval') {
