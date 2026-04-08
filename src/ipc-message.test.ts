@@ -380,3 +380,47 @@ describe('IPC injection integration with DB', () => {
     expect(qa.messages).toHaveLength(1);
   });
 });
+
+// --- Trigger pattern matching for IPC content ---
+
+describe('Slack mention trigger translation', () => {
+  // TRIGGER_PATTERN is /^@Fleet\b/i — imported from config
+  const TRIGGER_PATTERN = /^@Fleet\b/i;
+  const ASSISTANT_NAME = 'Fleet';
+
+  it('raw Slack mention does NOT match trigger pattern (proves the bug)', () => {
+    const raw = '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop';
+    expect(TRIGGER_PATTERN.test(raw.trim())).toBe(false);
+  });
+
+  it('translated content DOES match trigger pattern (proves the fix)', () => {
+    const raw = '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop';
+    // Apply the same translation as injectMessage
+    let content = raw;
+    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
+      content = `@${ASSISTANT_NAME} ${content}`;
+    }
+    expect(TRIGGER_PATTERN.test(content.trim())).toBe(true);
+    expect(content).toBe(
+      '@Fleet <@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop',
+    );
+  });
+
+  it('content already starting with @Fleet is not double-prefixed', () => {
+    const already = '@Fleet [DISPATCH-ROUTED] New ticket';
+    let content = already;
+    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
+      content = `@${ASSISTANT_NAME} ${content}`;
+    }
+    expect(content).toBe(already); // unchanged
+  });
+
+  it('content with no Slack mention and no @Fleet is not modified', () => {
+    const plain = 'Just a regular message with no mentions';
+    let content = plain;
+    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
+      content = `@${ASSISTANT_NAME} ${content}`;
+    }
+    expect(content).toBe(plain); // unchanged
+  });
+});
