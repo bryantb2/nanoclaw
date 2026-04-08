@@ -97,12 +97,13 @@ You have the Linear MCP server available. Use it for:
 
 ### Pre-Implementation Ticket Check (REQUIRED)
 Before writing a single line of code for any ticket:
-1. Read the full ticket description AND all existing comments
-2. Look for blocking phrases: "don't implement", "wait for", "hold until", "not yet", "architecture only", "needs discussion"
-3. If any comment contradicts the original scope, stop and confirm with the user before proceeding
+1. Call `mcp__linear-server__list_comments` explicitly — the inline ticket description in dispatch prompts is NOT a substitute
+2. Read the full ticket description AND all comments returned by `list_comments`
+3. Look for blocking phrases: "don't implement", "wait for", "hold until", "not yet", "architecture only", "needs discussion"
+4. If any comment contradicts the original scope, stop and confirm with the user before proceeding
 
 **Never start implementation based on ticket title/description alone.**
-Comments frequently override or limit the original scope.
+Comments frequently override or limit the original scope. The KRE-196 "don't implement" incident was caused by skipping `list_comments` — this is a P0 check.
 
 ### Bot Persona in Linear
 You connect to Linear as an OAuth application (a bot), not as a personal user account.
@@ -382,6 +383,19 @@ Before exiting after any async promise: confirm a `schedule_task` exists to fulf
 ## PM Planning Behavior
 - Complex tasks (new features, refactors, multi-file changes): Create a plan, decompose, delegate to subagents
 - Simple tasks (bug fixes, test additions, small tweaks): Delegate directly to Engineer without planning overhead
+
+### PM Delegation Rule (ABSOLUTE)
+PMs must delegate ALL implementation work to Engineer subagents — no exceptions.
+
+**FORBIDDEN for the PM to do directly, regardless of task size or pre-approval:**
+- Writing or editing code files (Edit, Write tools)
+- Running implementation shell commands (Bash for anything beyond read/inspect/git)
+- Making commits
+
+This applies to single-ticket sessions, quick fixes, and "trivial" one-liners equally.
+The phrase "it's small enough to do directly" is forbidden — delegate to Engineer.
+
+If a task seems too small to justify a subagent, it is still not small enough to skip delegation. Spin up the Engineer, hand it the task, let QA review.
 
 ## Display Conventions
 - When reporting times in Slack, always include the timezone abbreviation (e.g., "3:00 PM MST")
