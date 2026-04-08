@@ -501,7 +501,12 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'suppress_output'
     >
   >,
 ): void {
@@ -527,6 +532,10 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.suppress_output !== undefined) {
+    fields.push('suppress_output = ?');
+    values.push(updates.suppress_output ? 1 : 0);
   }
 
   if (fields.length === 0) return;

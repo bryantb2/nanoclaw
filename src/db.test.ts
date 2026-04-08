@@ -397,7 +397,9 @@ describe('task CRUD', () => {
     expect(task).toBeDefined();
     expect(task!.next_run).not.toBeNull();
     // next_run should be a valid ISO date in the future
-    expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now() - 60000);
+    expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(
+      Date.now() - 60000,
+    );
   });
 
   it('computes next_run for interval task when not provided', () => {
@@ -491,7 +493,8 @@ describe('task CRUD', () => {
 
     const task = getTaskById('task-suppress');
     expect(task).toBeDefined();
-    expect(task!.suppress_output).toBeTruthy();
+    // SQLite returns INTEGER 1, not boolean true. Code relies on truthiness.
+    expect(task!.suppress_output).toBe(1);
   });
 
   it('defaults suppress_output to false', () => {
@@ -682,7 +685,11 @@ describe('database initialization safety', () => {
 
   afterEach(() => {
     // Close db before cleanup so file handle is released
-    try { _getDb().close(); } catch { /* may already be closed */ }
+    try {
+      _getDb().close();
+    } catch {
+      /* may already be closed */
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
     // Restore in-memory db for global beforeEach
     _initTestDatabase();
