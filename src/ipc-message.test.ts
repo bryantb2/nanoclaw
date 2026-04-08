@@ -156,6 +156,30 @@ describe('processMessageIpc', () => {
       );
     });
 
+    it('does not call injectMessage when sendMessage throws', async () => {
+      const sendMessage = vi
+        .fn()
+        .mockRejectedValue(new Error('Slack API error'));
+      const injectMessage = vi.fn();
+
+      await expect(
+        processMessageIpc(
+          {
+            type: 'message',
+            chatJid: 'slack:dev-team',
+            text: '@Fleet task that fails to post',
+          },
+          'slack_dispatch',
+          true,
+          groups,
+          { sendMessage, injectMessage },
+        ),
+      ).rejects.toThrow('Slack API error');
+
+      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(injectMessage).not.toHaveBeenCalled();
+    });
+
     it('works when injectMessage is undefined (backwards compat)', async () => {
       const sendMessage = vi.fn().mockResolvedValue(undefined);
 
@@ -349,16 +373,8 @@ describe('IPC injection integration with DB', () => {
       is_bot_message: false,
     });
 
-    const devTeam = getNewMessages(
-      ['slack:dev-team'],
-      '1700000000',
-      'Fleet',
-    );
-    const qa = getNewMessages(
-      ['slack:qa-sentinel'],
-      '1700000000',
-      'Fleet',
-    );
+    const devTeam = getNewMessages(['slack:dev-team'], '1700000000', 'Fleet');
+    const qa = getNewMessages(['slack:qa-sentinel'], '1700000000', 'Fleet');
 
     expect(devTeam.messages).toHaveLength(1);
     expect(qa.messages).toHaveLength(1);

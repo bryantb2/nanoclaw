@@ -973,8 +973,9 @@ async function main(): Promise<void> {
     },
     injectMessage: (chatJid, text, senderName) => {
       const ts = String(Date.now() / 1000);
+      const rand = Math.random().toString(36).slice(2, 8);
       storeMessage({
-        id: `ipc-${ts}`,
+        id: `ipc-${ts}-${rand}`,
         chat_jid: chatJid,
         sender: 'ipc',
         sender_name: senderName,
@@ -983,7 +984,7 @@ async function main(): Promise<void> {
         // is_from_me=true so the trigger sender check passes without
         // requiring 'ipc' in the sender allowlist.
         // is_bot_message=false so getNewMessages includes this row
-        // (its WHERE clause filters is_bot_message=1).
+        // (its WHERE clause requires is_bot_message = 0, excluding bot messages).
         is_from_me: true,
         is_bot_message: false,
       });
