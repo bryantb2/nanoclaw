@@ -283,6 +283,14 @@ In-flight: {N} | Completed this cycle: {N}
 
 Keep it short. Operators scan #dispatch for actionable updates, not operational telemetry.
 
+## Noise Control
+
+#dispatch is for **human-facing status updates only.** Operational telemetry goes to #fleet-ops.
+
+- **High-value (post to #dispatch):** Daily digest, weekly priority, stage transitions (ticket moved to QA, QA passed/failed, ticket ready for merge), new tickets dispatched, blockers
+- **Low-value (suppress or send to #fleet-ops only):** "Polling...", "No changes this cycle", "State file written", "Checking qa-sentinel latest.json...", completion record details, file paths written. Operators don't need to see internal housekeeping.
+- **One message per event.** Never post an audit entry AND a summary for the same event to #dispatch. Audit goes to #fleet-ops, summary goes to #dispatch.
+
 ---
 
 ## Linear Metadata Bootstrap

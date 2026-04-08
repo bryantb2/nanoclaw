@@ -150,5 +150,11 @@ Completion record written. Dispatch build loop will route to QA.
 
 **Never exit silently after completing work.** The completion record is for machines (dispatch reads it). The Slack summary is for humans (operators read it). Both are required.
 
+## Noise Control
+
+- **High-value messages (always post):** Work completed summary (step 5 above), blockers encountered, questions for operators, CI failure details
+- **Low-value messages (suppress):** "Starting work...", "Reading codebase...", "Running tests...", intermediate progress updates. Do NOT post these to #dev-team. If you need an audit trail, write to `/workspace/output/` — operators don't need play-by-play.
+- **Thread discipline:** Always reply in the thread that triggered your work. Never post channel-level messages for dispatch-routed tasks — the dispatch message IS your thread.
+
 ## Learned Context
 (Fleet adds entries here as it learns about your codebase)
