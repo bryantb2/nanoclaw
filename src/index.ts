@@ -972,11 +972,25 @@ async function main(): Promise<void> {
       return channel.sendMessage(jid, text, threadOpts);
     },
     injectMessage: (chatJid, text, senderName) => {
-      // Use ISO 8601 timestamp — must match the format used by Slack channel
-      // messages and router_state.last_timestamp. getNewMessages compares
-      // timestamps as strings (WHERE timestamp > ?), so epoch format
-      // (e.g. "1775673241") is lexicographically less than ISO format
-      // (e.g. "2026-04-08T...") and would never be picked up.
+      // IPC messages bypass the Slack channel adapter, so the
+      // <@UBOTID> → @Fleet translation that normally happens in
+      // slack.ts never runs. Without it, TRIGGER_PATTERN (/^@Fleet\b/i)
+      // won't match and the message is ignored by the trigger check.
+      // Apply the same translation here: if content contains a Slack
+      // mention and doesn't already match the trigger, prepend @Fleet.
+      let content = text;
+      if (
+        !TRIGGER_PATTERN.test(content.trim()) &&
+        /<@U[A-Z0-9]+(|[^>]*)?>/.test(content)
+      ) {
+        content = `@${ASSISTANT_NAME} ${content}`;
+      }
+
+      // Use ISO 8601 timestamp — must match the format used by the
+      // Slack channel adapter and router_state.last_timestamp.
+      // getNewMessages compares timestamps as strings (WHERE timestamp > ?),
+      // so epoch format would be lexicographically less than ISO and
+      // never picked up.
       const ts = new Date().toISOString();
       const rand = Math.random().toString(36).slice(2, 8);
       storeMessage({
@@ -984,7 +998,7 @@ async function main(): Promise<void> {
         chat_jid: chatJid,
         sender: 'ipc',
         sender_name: senderName,
-        content: text,
+        content,
         timestamp: ts,
         // is_from_me=true so the trigger sender check passes without
         // requiring 'ipc' in the sender allowlist.
