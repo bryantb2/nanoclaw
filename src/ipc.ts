@@ -16,6 +16,17 @@ export interface IpcDeps {
     text: string,
     opts?: { threadTs?: string },
   ) => Promise<void>;
+  /**
+   * Store a message in the DB and enqueue the target group for processing.
+   * Used by IPC routing so dispatch-routed messages trigger container spawns.
+   * Bot-posted Slack messages are filtered by getNewMessages (is_bot_message=0),
+   * so IPC must inject messages directly to bypass that filter.
+   */
+  injectMessage?: (
+    chatJid: string,
+    text: string,
+    senderName: string,
+  ) => void;
   uploadFile: (params: {
     channelId: string;
     filePath: string;
@@ -97,6 +108,18 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     data.text,
                     data.threadTs ? { threadTs: data.threadTs } : undefined,
                   );
+                  // Inject the message directly into the DB and enqueue
+                  // the target group for processing. Bot-posted messages
+                  // are filtered out by getNewMessages (is_bot_message=0),
+                  // so without this, IPC-routed messages never trigger a
+                  // container in the target group.
+                  if (deps.injectMessage) {
+                    deps.injectMessage(
+                      data.chatJid,
+                      data.text,
+                      `ipc:${sourceGroup}`,
+                    );
+                  }
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',

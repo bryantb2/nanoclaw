@@ -82,17 +82,23 @@ export function selectThreadMessage(
   isMain: boolean,
   chatJid: string,
   triggerPattern: RegExp,
-  allowlistChecker: (chatJid: string, sender: string, cfg: ReturnType<typeof loadSenderAllowlist>) => boolean,
+  allowlistChecker: (
+    chatJid: string,
+    sender: string,
+    cfg: ReturnType<typeof loadSenderAllowlist>,
+  ) => boolean,
   allowlistLoader: () => ReturnType<typeof loadSenderAllowlist>,
 ): NewMessage | undefined {
   if (messages.length === 0) return undefined;
   if (isMain) return messages[messages.length - 1];
   const cfg = allowlistLoader();
-  return [...messages].reverse().find(
-    (m) =>
-      triggerPattern.test(m.content.trim()) &&
-      (m.is_from_me || allowlistChecker(chatJid, m.sender, cfg)),
-  );
+  return [...messages]
+    .reverse()
+    .find(
+      (m) =>
+        triggerPattern.test(m.content.trim()) &&
+        (m.is_from_me || allowlistChecker(chatJid, m.sender, cfg)),
+    );
 }
 
 let lastTimestamp = '';
@@ -239,7 +245,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   const threadMsg = selectThreadMessage(
-    missedMessages, isMainGroup, chatJid, TRIGGER_PATTERN, isTriggerAllowed, loadSenderAllowlist,
+    missedMessages,
+    isMainGroup,
+    chatJid,
+    TRIGGER_PATTERN,
+    isTriggerAllowed,
+    loadSenderAllowlist,
   );
   const threadTs = threadMsg?.id;
   if (threadTs) latestThreadTs[chatJid] = threadTs;
@@ -589,7 +600,12 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           const pipedThreadMsg = selectThreadMessage(
-            messagesToSend, isMainGroup, chatJid, TRIGGER_PATTERN, isTriggerAllowed, loadSenderAllowlist,
+            messagesToSend,
+            isMainGroup,
+            chatJid,
+            TRIGGER_PATTERN,
+            isTriggerAllowed,
+            loadSenderAllowlist,
           );
           if (pipedThreadMsg) latestThreadTs[chatJid] = pipedThreadMsg.id;
           if (queue.sendMessage(chatJid, formatted)) {
@@ -954,6 +970,24 @@ async function main(): Promise<void> {
         ? { ...opts, threadTs: latestThreadTs[jid] }
         : opts;
       return channel.sendMessage(jid, text, threadOpts);
+    },
+    injectMessage: (chatJid, text, senderName) => {
+      const ts = String(Date.now() / 1000);
+      storeMessage({
+        id: `ipc-${ts}`,
+        chat_jid: chatJid,
+        sender: 'ipc',
+        sender_name: senderName,
+        content: text,
+        timestamp: ts,
+        // is_from_me=true so the trigger sender check passes without
+        // requiring 'ipc' in the sender allowlist.
+        // is_bot_message=false so getNewMessages includes this row
+        // (its WHERE clause filters is_bot_message=1).
+        is_from_me: true,
+        is_bot_message: false,
+      });
+      queue.enqueueMessageCheck(chatJid);
     },
     uploadFile: async (params) => {
       const channel = channels.find((ch) => ch.uploadFile);
