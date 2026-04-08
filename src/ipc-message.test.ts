@@ -389,7 +389,7 @@ describe('IPC injection integration with DB', () => {
 function applyTriggerTranslation(text: string): string {
   const TRIGGER_PATTERN = /^@Fleet\b/i;
   const ASSISTANT_NAME = 'Fleet';
-  const SLACK_MENTION = /<@U[A-Z0-9]+(\|[^>]*)?>/ ;
+  const SLACK_MENTION = /<@U[A-Z0-9]+(\|[^>]*)?>/;
   let content = text;
   if (!TRIGGER_PATTERN.test(content.trim()) && SLACK_MENTION.test(content)) {
     content = `@${ASSISTANT_NAME} ${content}`;
@@ -407,9 +407,9 @@ describe('Slack mention trigger translation', () => {
   });
 
   it('raw <@UID|Name> mention does NOT match trigger', () => {
-    expect(
-      TRIGGER_PATTERN.test('<@U0AK0PRUFTM|Agent Fleet> task'.trim()),
-    ).toBe(false);
+    expect(TRIGGER_PATTERN.test('<@U0AK0PRUFTM|Agent Fleet> task'.trim())).toBe(
+      false,
+    );
   });
 
   // --- Proves the fix ---
@@ -419,9 +419,7 @@ describe('Slack mention trigger translation', () => {
       '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket',
     );
     expect(TRIGGER_PATTERN.test(result.trim())).toBe(true);
-    expect(result).toBe(
-      '@Fleet <@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket',
-    );
+    expect(result).toBe('@Fleet <@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket');
   });
 
   it('translates <@UID|DisplayName> format', () => {
@@ -529,5 +527,174 @@ describe('IPC injection end-to-end trigger flow', () => {
     expect(ipcMsg).toBeDefined();
     // But trigger pattern FAILS — this is what caused the sev-0
     expect(TRIGGER_PATTERN.test(ipcMsg!.content.trim())).toBe(false);
+  });
+});
+
+// --- Bot prefix filter: content NOT LIKE 'Fleet:%' ---
+// getNewMessages filters messages where content starts with '{botPrefix}:'.
+// This is a backstop for pre-migration bot messages. IPC-injected messages
+// must never accidentally match this pattern.
+
+describe('getNewMessages bot prefix filter', () => {
+  it('message starting with "Fleet:" is filtered out', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'prefix-test-1',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: 'Fleet: here is your update on KRE-227',
+      timestamp: '2026-04-08T20:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    // Silently filtered — this is a latent trap for IPC messages
+    expect(messages).toHaveLength(0);
+  });
+
+  it('"@Fleet" prefix is NOT filtered (correct IPC format)', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'prefix-test-2',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: '@Fleet [DISPATCH-ROUTED] implement KRE-259',
+      timestamp: '2026-04-08T20:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe('prefix-test-2');
+  });
+
+  it('translated IPC content "@Fleet <@UID>..." is NOT filtered', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    const translated = applyTriggerTranslation(
+      '<@U0AK0PRUFTM> [DISPATCH-ROUTED] new ticket',
+    );
+    storeMessage({
+      id: 'prefix-test-3',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: translated,
+      timestamp: '2026-04-08T20:02:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    // Must NOT be filtered — "@Fleet <@U...>" does not match "Fleet:%"
+    expect(messages.length).toBeGreaterThanOrEqual(1);
+    expect(messages.find((m) => m.id === 'prefix-test-3')).toBeDefined();
+  });
+
+  it('empty content is filtered out', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'prefix-test-4',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: '',
+      timestamp: '2026-04-08T20:03:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages.find((m) => m.id === 'prefix-test-4')).toBeUndefined();
+  });
+});
+
+// --- Timestamp format comparison regression guard ---
+// getNewMessages uses string comparison (WHERE timestamp > ?).
+// Epoch format is lexicographically less than ISO and would be invisible.
+
+describe('timestamp format affects getNewMessages visibility', () => {
+  it('ISO timestamp message is visible after ISO last_timestamp', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'ts-iso-1',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: '@Fleet test message',
+      timestamp: '2026-04-08T20:00:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
+  });
+
+  it('epoch timestamp message is INVISIBLE after ISO last_timestamp (regression guard)', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'ts-epoch-1',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: '@Fleet test message',
+      // Epoch format — "1775..." < "2026..." in string comparison
+      timestamp: '1775673241.794',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-08T19:00:00.000Z',
+      'Fleet',
+    );
+    // Epoch timestamp is lexicographically LESS than ISO — invisible
+    expect(messages.find((m) => m.id === 'ts-epoch-1')).toBeUndefined();
+  });
+
+  it('epoch timestamp IS visible when last_timestamp is also epoch (consistency check)', () => {
+    storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
+    storeMessage({
+      id: 'ts-epoch-2',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:dispatch',
+      content: '@Fleet test message',
+      timestamp: '1775673241.794',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '1775673240.000', // epoch baseline — both are epoch, comparison works
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
   });
 });
