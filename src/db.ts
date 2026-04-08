@@ -129,6 +129,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add suppress_output column to scheduled_tasks if it doesn't exist
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN suppress_output INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -448,8 +457,8 @@ export function createTask(
 
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, max_budget_usd)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, max_budget_usd, suppress_output)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -463,6 +472,7 @@ export function createTask(
     task.status,
     task.created_at,
     task.max_budget_usd ?? null,
+    task.suppress_output ? 1 : 0,
   );
 }
 

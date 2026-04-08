@@ -67,6 +67,9 @@ export interface ScheduledTask {
   status: 'active' | 'paused' | 'completed';
   created_at: string;
   max_budget_usd?: number | null;
+  /** When true, container stdout is NOT auto-posted to Slack.
+   *  Agent uses IPC sendMessage for deliberate communication only. */
+  suppress_output?: boolean;
 }
 
 export interface TaskRunLog {

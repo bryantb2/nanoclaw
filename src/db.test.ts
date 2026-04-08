@@ -474,6 +474,45 @@ describe('task CRUD', () => {
     expect(task!.next_run).toBeNull();
   });
 
+  it('stores suppress_output flag', () => {
+    createTask({
+      id: 'task-suppress',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'silent task',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      suppress_output: true,
+    });
+
+    const task = getTaskById('task-suppress');
+    expect(task).toBeDefined();
+    expect(task!.suppress_output).toBeTruthy();
+  });
+
+  it('defaults suppress_output to false', () => {
+    createTask({
+      id: 'task-no-suppress',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'normal task',
+      schedule_type: 'once',
+      schedule_value: '2030-01-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-no-suppress');
+    expect(task).toBeDefined();
+    expect(task!.suppress_output).toBeFalsy();
+  });
+
   it('deletes a task and its run logs', () => {
     createTask({
       id: 'task-3',

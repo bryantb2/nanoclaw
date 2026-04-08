@@ -248,6 +248,7 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    suppress_output?: boolean;
     // For register_group
     jid?: string;
     name?: string;
@@ -349,6 +350,7 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          suppress_output: data.suppress_output === true,
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },
