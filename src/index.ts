@@ -1026,12 +1026,22 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   queue.setOnMessageQueued((groupJid) => {
+    // Don't send "Queued" for isMain groups — they process all messages
+    // inline via piped stdin. The message isn't actually queued; the
+    // running container will receive it. Sending "Queued" is misleading.
+    const group = registeredGroups[groupJid];
+    if (group?.isMain) return;
+
     const channel = findChannel(channels, groupJid);
     if (!channel) return;
+    // Reply in the current thread so the notification is contextual,
+    // not a disruptive channel-level message.
+    const threadTs = latestThreadTs[groupJid];
     channel
       .sendMessage(
         groupJid,
         "Queued — I'm working on something else in this channel. You're next.",
+        threadTs ? { threadTs } : undefined,
       )
       .catch((err) =>
         logger.warn({ groupJid, err }, 'Failed to send queue acknowledgment'),
