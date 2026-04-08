@@ -382,45 +382,152 @@ describe('IPC injection integration with DB', () => {
 });
 
 // --- Trigger pattern matching for IPC content ---
+// These tests mirror the exact translation logic in injectMessage (index.ts)
+// to guard against the sev-0 dispatch routing failure.
 
-describe('Slack mention trigger translation', () => {
-  // TRIGGER_PATTERN is /^@Fleet\b/i — imported from config
+/** Applies the same translation as injectMessage in index.ts */
+function applyTriggerTranslation(text: string): string {
   const TRIGGER_PATTERN = /^@Fleet\b/i;
   const ASSISTANT_NAME = 'Fleet';
+  const SLACK_MENTION = /<@U[A-Z0-9]+(\|[^>]*)?>/ ;
+  let content = text;
+  if (!TRIGGER_PATTERN.test(content.trim()) && SLACK_MENTION.test(content)) {
+    content = `@${ASSISTANT_NAME} ${content}`;
+  }
+  return content;
+}
 
-  it('raw Slack mention does NOT match trigger pattern (proves the bug)', () => {
-    const raw = '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop';
-    expect(TRIGGER_PATTERN.test(raw.trim())).toBe(false);
+describe('Slack mention trigger translation', () => {
+  const TRIGGER_PATTERN = /^@Fleet\b/i;
+
+  // --- Proves the bug ---
+
+  it('raw <@UID> mention does NOT match trigger', () => {
+    expect(TRIGGER_PATTERN.test('<@U0AK0PRUFTM> task'.trim())).toBe(false);
   });
 
-  it('translated content DOES match trigger pattern (proves the fix)', () => {
-    const raw = '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop';
-    // Apply the same translation as injectMessage
-    let content = raw;
-    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
-      content = `@${ASSISTANT_NAME} ${content}`;
-    }
-    expect(TRIGGER_PATTERN.test(content.trim())).toBe(true);
-    expect(content).toBe(
-      '@Fleet <@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket for build loop',
+  it('raw <@UID|Name> mention does NOT match trigger', () => {
+    expect(
+      TRIGGER_PATTERN.test('<@U0AK0PRUFTM|Agent Fleet> task'.trim()),
+    ).toBe(false);
+  });
+
+  // --- Proves the fix ---
+
+  it('translates <@UID> format', () => {
+    const result = applyTriggerTranslation(
+      '<@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket',
+    );
+    expect(TRIGGER_PATTERN.test(result.trim())).toBe(true);
+    expect(result).toBe(
+      '@Fleet <@U0AK0PRUFTM> [DISPATCH-ROUTED] New ticket',
     );
   });
 
-  it('content already starting with @Fleet is not double-prefixed', () => {
-    const already = '@Fleet [DISPATCH-ROUTED] New ticket';
-    let content = already;
-    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
-      content = `@${ASSISTANT_NAME} ${content}`;
-    }
-    expect(content).toBe(already); // unchanged
+  it('translates <@UID|DisplayName> format', () => {
+    const result = applyTriggerTranslation(
+      '<@U0AK0PRUFTM|Agent Fleet> [DISPATCH-ROUTED] New ticket',
+    );
+    expect(TRIGGER_PATTERN.test(result.trim())).toBe(true);
+    expect(result).toBe(
+      '@Fleet <@U0AK0PRUFTM|Agent Fleet> [DISPATCH-ROUTED] New ticket',
+    );
   });
 
-  it('content with no Slack mention and no @Fleet is not modified', () => {
-    const plain = 'Just a regular message with no mentions';
-    let content = plain;
-    if (!TRIGGER_PATTERN.test(content.trim()) && /<@U[A-Z0-9]+>/.test(content)) {
-      content = `@${ASSISTANT_NAME} ${content}`;
-    }
-    expect(content).toBe(plain); // unchanged
+  // --- Guard rails ---
+
+  it('does not double-prefix content already starting with @Fleet', () => {
+    expect(applyTriggerTranslation('@Fleet [DISPATCH-ROUTED] task')).toBe(
+      '@Fleet [DISPATCH-ROUTED] task',
+    );
+  });
+
+  it('does not modify plain content with no mentions', () => {
+    expect(applyTriggerTranslation('Just a regular message')).toBe(
+      'Just a regular message',
+    );
+  });
+
+  it('does not modify content with @Fleet and an embedded mention', () => {
+    const text = '@Fleet please notify <@U097BKJJ2G6> about this';
+    expect(applyTriggerTranslation(text)).toBe(text);
+  });
+
+  it('handles mention mid-text (not at start) — still translates', () => {
+    const text = 'Hey <@U0AK0PRUFTM> please do this';
+    const result = applyTriggerTranslation(text);
+    expect(TRIGGER_PATTERN.test(result.trim())).toBe(true);
+    expect(result).toBe('@Fleet Hey <@U0AK0PRUFTM> please do this');
+  });
+
+  it('handles empty string', () => {
+    expect(applyTriggerTranslation('')).toBe('');
+  });
+
+  it('handles whitespace-only content', () => {
+    expect(applyTriggerTranslation('   ')).toBe('   ');
+  });
+});
+
+// --- End-to-end: IPC injection → getNewMessages → trigger check ---
+
+describe('IPC injection end-to-end trigger flow', () => {
+  const TRIGGER_PATTERN = /^@Fleet\b/i;
+
+  it('translated IPC message passes full trigger pipeline', () => {
+    // Simulate what injectMessage does: translate, store, then verify
+    // getNewMessages returns it AND trigger pattern matches
+    const raw = '<@U0AK0PRUFTM> [DISPATCH-ROUTED] implement KRE-259';
+    const translated = applyTriggerTranslation(raw);
+
+    storeMessage({
+      id: 'ipc-e2e-test-1',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: translated,
+      timestamp: new Date().toISOString(),
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+
+    // Message is returned by getNewMessages
+    expect(messages).toHaveLength(1);
+    // Trigger pattern matches the content
+    expect(TRIGGER_PATTERN.test(messages[0].content.trim())).toBe(true);
+    // is_from_me passes the sender check
+    expect(messages[0].is_from_me).toBeTruthy();
+  });
+
+  it('UN-translated IPC message FAILS trigger check (regression guard)', () => {
+    // Store raw Slack mention WITHOUT translation — proves the bug
+    storeMessage({
+      id: 'ipc-e2e-test-2',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: '<@U0AK0PRUFTM> [DISPATCH-ROUTED] implement KRE-259',
+      timestamp: new Date().toISOString(),
+      is_from_me: true,
+      is_bot_message: false,
+    });
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+
+    // Message IS returned (passes DB filters)
+    const ipcMsg = messages.find((m) => m.id === 'ipc-e2e-test-2');
+    expect(ipcMsg).toBeDefined();
+    // But trigger pattern FAILS — this is what caused the sev-0
+    expect(TRIGGER_PATTERN.test(ipcMsg!.content.trim())).toBe(false);
   });
 });

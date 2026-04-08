@@ -981,7 +981,7 @@ async function main(): Promise<void> {
       let content = text;
       if (
         !TRIGGER_PATTERN.test(content.trim()) &&
-        /<@U[A-Z0-9]+>/.test(content)
+        /<@U[A-Z0-9]+(|[^>]*)?>/.test(content)
       ) {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
