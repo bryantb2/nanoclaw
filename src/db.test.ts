@@ -379,6 +379,101 @@ describe('task CRUD', () => {
     expect(getTaskById('task-2')!.status).toBe('paused');
   });
 
+  it('computes next_run for cron task when not provided', () => {
+    createTask({
+      id: 'task-cron-no-next',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'cron task',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-cron-no-next');
+    expect(task).toBeDefined();
+    expect(task!.next_run).not.toBeNull();
+    // next_run should be a valid ISO date in the future
+    expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now() - 60000);
+  });
+
+  it('computes next_run for interval task when not provided', () => {
+    createTask({
+      id: 'task-interval-no-next',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'interval task',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-interval-no-next');
+    expect(task).toBeDefined();
+    expect(task!.next_run).not.toBeNull();
+  });
+
+  it('computes next_run for once task when not provided', () => {
+    createTask({
+      id: 'task-once-no-next',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'once task',
+      schedule_type: 'once',
+      schedule_value: '2030-01-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-once-no-next');
+    expect(task).toBeDefined();
+    expect(task!.next_run).toBe('2030-01-01T00:00:00.000Z');
+  });
+
+  it('does not overwrite next_run when already provided', () => {
+    createTask({
+      id: 'task-explicit-next',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'explicit next_run',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      next_run: '2099-01-01T03:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-explicit-next');
+    expect(task!.next_run).toBe('2099-01-01T03:00:00.000Z');
+  });
+
+  it('does not compute next_run for non-active tasks', () => {
+    createTask({
+      id: 'task-paused-cron',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'paused cron',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'paused',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-paused-cron');
+    expect(task!.next_run).toBeNull();
+  });
+
   it('deletes a task and its run logs', () => {
     createTask({
       id: 'task-3',

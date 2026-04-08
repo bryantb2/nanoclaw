@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3';
+import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, STORE_DIR, TIMEZONE } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -414,6 +415,37 @@ export function getMessagesSince(
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
+  // Compute next_run if not provided for recurring tasks.
+  // Prevents silent scheduling failures where tasks are created
+  // as 'active' but never fire because getDueTasks requires
+  // next_run IS NOT NULL.
+  let nextRun = task.next_run;
+  if (!nextRun && task.status === 'active') {
+    if (task.schedule_type === 'cron') {
+      try {
+        const interval = CronExpressionParser.parse(task.schedule_value, {
+          tz: TIMEZONE,
+        });
+        nextRun = interval.next().toISOString();
+      } catch {
+        logger.warn(
+          { taskId: task.id, scheduleValue: task.schedule_value },
+          'createTask: invalid cron expression, next_run will be null',
+        );
+      }
+    } else if (task.schedule_type === 'interval') {
+      const ms = parseInt(task.schedule_value, 10);
+      if (!isNaN(ms) && ms > 0) {
+        nextRun = new Date(Date.now() + ms).toISOString();
+      }
+    } else if (task.schedule_type === 'once') {
+      const date = new Date(task.schedule_value);
+      if (!isNaN(date.getTime())) {
+        nextRun = date.toISOString();
+      }
+    }
+  }
+
   db.prepare(
     `
     INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, max_budget_usd)
@@ -427,7 +459,7 @@ export function createTask(
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
-    task.next_run,
+    nextRun,
     task.status,
     task.created_at,
     task.max_budget_usd ?? null,
