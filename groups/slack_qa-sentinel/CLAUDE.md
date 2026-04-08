@@ -385,6 +385,36 @@ git fetch origin
 ```
 If checking out a PR branch: `git checkout {branch} && git pull origin {branch}`
 
+## Post-QA Summary (MANDATORY)
+
+After completing ANY QA gate or review task, post a summary so operators have visibility.
+
+**For dispatch-routed tasks (`[DISPATCH-ROUTED]`):** Reply in the thread where the dispatch message arrived. Use `send_message` with the thread_ts of the dispatch message.
+
+**For nightly/scheduled tasks:** Post to #qa-sentinel as a new message (these have no parent thread).
+
+**Format:**
+```
+[PASS] QA gate — PR #{N} ({TICKET_ID})
+Japa: {X}/{Y} passed | Playwright: {X}/{Y} passed
+PR: {URL}
+```
+OR
+```
+[FAIL] QA gate — PR #{N} ({TICKET_ID})
+Japa: {failures} | Playwright: {failures}
+Details: {error summary}
+PR: {URL}
+```
+
+**Never exit silently after completing QA work.** The completion record is for machines (dispatch reads it). The Slack summary is for humans. Both are required.
+
+## Noise Control
+
+- **High-value messages (always post):** QA verdicts ([PASS]/[FAIL]), coverage regressions, nightly click-through results
+- **Low-value messages (suppress):** "Starting QA...", "Running tests...", "Checking out branch...", intermediate progress. Post these to #fleet-ops only if needed for audit trail.
+- **Silence = green.** If a nightly sweep finds nothing, do NOT post "all clear" to #qa-sentinel. Suppress [PASS] messages when nothing new to report (already in Communication Style).
+
 ## Learned Context
 
 (Fleet adds entries here as it learns about the codebase and processes)

@@ -130,5 +130,31 @@ Write to `/workspace/output/latest.json` per the global CLAUDE.md schema. Includ
 ### 4. QA routing
 Do NOT send IPC messages directly to QA. Dispatch handles all QA routing via its build loop — it reads your `pr_ready_for_review` signal from the completion record and routes to QA automatically. Set `has_ui_changes: true` in the signal payload so dispatch knows to request screenshots.
 
+### 5. Post work summary to Slack (MANDATORY)
+
+After ALL PRs are opened and CI is confirmed green, post a summary to #dev-team so operators can see what was done. This is not optional — without it, humans have no visibility into completed work.
+
+**For dispatch-routed tasks:** Reply in the thread where the `[DISPATCH-ROUTED]` message arrived. Use `send_message` with the thread_ts of the dispatch message.
+
+**For human-triggered tasks:** Reply in the thread where the human asked for the work.
+
+**Format:**
+```
+Done. {N} PR(s) opened:
+
+• KRE-{ID}: {title} — PR #{N} ({URL}) — CI: passing, {X} tests
+• KRE-{ID}: {title} — PR #{N} ({URL}) — CI: passing, {X} tests
+
+Completion record written. Dispatch build loop will route to QA.
+```
+
+**Never exit silently after completing work.** The completion record is for machines (dispatch reads it). The Slack summary is for humans (operators read it). Both are required.
+
+## Noise Control
+
+- **High-value messages (always post):** Work completed summary (step 5 above), blockers encountered, questions for operators, CI failure details
+- **Low-value messages (suppress):** "Starting work...", "Reading codebase...", "Running tests...", intermediate progress updates. Do NOT post these to #dev-team. If you need an audit trail, write to `/workspace/output/` — operators don't need play-by-play.
+- **Thread discipline:** Always reply in the thread that triggered your work. Never post channel-level messages for dispatch-routed tasks — the dispatch message IS your thread.
+
 ## Learned Context
 (Fleet adds entries here as it learns about your codebase)

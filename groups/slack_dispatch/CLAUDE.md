@@ -69,11 +69,12 @@ All other groups' output directories are mounted read-only into this container. 
    - Ops issues (dev-ops failures, CI failures)
    - Product updates (product-brain proposals, completed work)
 
-4. **Post digest to #dispatch** (channel JID: `DISPATCH_CHANNEL_JID`):
+4. **Post digest to #dispatch via IPC sendMessage** (channel JID: `DISPATCH_CHANNEL_JID`):
+   - Your stdout is suppressed — you MUST use IPC sendMessage to post (see Step 7 for IPC format)
    - Always post, even on quiet days — use "All quiet" message to confirm the loop is alive
    - Address humans by name (Blake, Joe, Steve, Bruce)
 
-5. **Write completion record** to `/workspace/output/latest.json` and copy to `/workspace/output/archive/{ISO_TIMESTAMP}.json`. Post audit entry to #fleet-ops.
+5. **Write completion record** to `/workspace/output/latest.json` and copy to `/workspace/output/archive/{ISO_TIMESTAMP}.json`. Post audit entry to #fleet-ops via IPC sendMessage.
 
 **Digest format:**
 ```
@@ -130,9 +131,9 @@ Blake, all quiet today (Wednesday, April 2):
    - Each item MUST trace back to specific completion records or Linear data (cite the source)
    - Include estimated effort and blocking relationships where visible
 
-4. **Post to #dispatch** (channel JID: `DISPATCH_CHANNEL_JID`) with the recommendation.
+4. **Post to #dispatch via IPC sendMessage** (channel JID: `DISPATCH_CHANNEL_JID`) with the recommendation. Your stdout is suppressed — use IPC (see Step 7 for format).
 
-5. **Write completion record** and post audit entry.
+5. **Write completion record** and post audit entry to #fleet-ops via IPC sendMessage.
 
 **Format:**
 ```
@@ -258,8 +259,16 @@ Only write a completion record AND post to #dispatch if there was actual activit
 
 **Posting rules for build loop polls:**
 - **Quiet poll (no changes):** No message to #dispatch. No completion record. No audit entry. Silence = healthy.
-- **Active poll (stage transitions, new tickets, QA results):** Post ONE concise message to #dispatch summarizing what changed. Do NOT post a separate audit entry to #dispatch — audit entries go to #fleet-ops only.
-- **Never post two messages for the same poll cycle.** One message maximum per poll.
+- **Active poll (stage transitions, new tickets, QA results):** Post ONE concise message to #dispatch via IPC sendMessage. Post audit entry to #fleet-ops via IPC sendMessage. Do NOT rely on your stdout — it is suppressed for cron tasks.
+- **Never post two messages to #dispatch for the same poll cycle.** One message maximum.
+
+**IMPORTANT: All Slack output must use IPC sendMessage files.**
+Your container has `suppress_output` enabled — your stdout is NOT posted to Slack. To post a message, write an IPC file:
+```json
+// Write to /workspace/ipc/messages/notify-{TIMESTAMP}.json using the Write tool
+{ "type": "message", "chatJid": "DISPATCH_CHANNEL_JID", "text": "your message here" }
+```
+This applies to ALL dispatch cron tasks (daily digest, weekly priority, build loop). If you don't write an IPC message, humans see nothing.
 
 **Format for active polls:**
 ```
@@ -273,6 +282,14 @@ In-flight: {N} | Completed this cycle: {N}
 ```
 
 Keep it short. Operators scan #dispatch for actionable updates, not operational telemetry.
+
+## Noise Control
+
+#dispatch is for **human-facing status updates only.** Operational telemetry goes to #fleet-ops.
+
+- **High-value (post to #dispatch):** Daily digest, weekly priority, stage transitions (ticket moved to QA, QA passed/failed, ticket ready for merge), new tickets dispatched, blockers
+- **Low-value (suppress or send to #fleet-ops only):** "Polling...", "No changes this cycle", "State file written", "Checking qa-sentinel latest.json...", completion record details, file paths written. Operators don't need to see internal housekeeping.
+- **One message per event.** Never post an audit entry AND a summary for the same event to #dispatch. Audit goes to #fleet-ops, summary goes to #dispatch.
 
 ---
 
