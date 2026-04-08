@@ -397,7 +397,9 @@ describe('task CRUD', () => {
     expect(task).toBeDefined();
     expect(task!.next_run).not.toBeNull();
     // next_run should be a valid ISO date in the future
-    expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(Date.now() - 60000);
+    expect(new Date(task!.next_run!).getTime()).toBeGreaterThan(
+      Date.now() - 60000,
+    );
   });
 
   it('computes next_run for interval task when not provided', () => {
@@ -472,6 +474,46 @@ describe('task CRUD', () => {
 
     const task = getTaskById('task-paused-cron');
     expect(task!.next_run).toBeNull();
+  });
+
+  it('stores suppress_output flag', () => {
+    createTask({
+      id: 'task-suppress',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'silent task',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      suppress_output: true,
+    });
+
+    const task = getTaskById('task-suppress');
+    expect(task).toBeDefined();
+    // SQLite returns INTEGER 1, not boolean true. Code relies on truthiness.
+    expect(task!.suppress_output).toBe(1);
+  });
+
+  it('defaults suppress_output to false', () => {
+    createTask({
+      id: 'task-no-suppress',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'normal task',
+      schedule_type: 'once',
+      schedule_value: '2030-01-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const task = getTaskById('task-no-suppress');
+    expect(task).toBeDefined();
+    expect(task!.suppress_output).toBeFalsy();
   });
 
   it('deletes a task and its run logs', () => {
@@ -643,7 +685,11 @@ describe('database initialization safety', () => {
 
   afterEach(() => {
     // Close db before cleanup so file handle is released
-    try { _getDb().close(); } catch { /* may already be closed */ }
+    try {
+      _getDb().close();
+    } catch {
+      /* may already be closed */
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
     // Restore in-memory db for global beforeEach
     _initTestDatabase();
