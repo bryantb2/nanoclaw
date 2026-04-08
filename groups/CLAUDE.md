@@ -121,12 +121,29 @@ Behave accordingly:
 - When you create a PR: include the PR URL and link it to the Linear ticket
 - When stuck: ask the human, don't guess
 - When a scheduled task runs: post results to the relevant Slack channel
-- When sending mid-session progress updates via `send_message` and the user's message arrived in a Slack thread, pass `thread_ts` to `send_message` so replies stay in the thread. The thread_ts value is provided at the top of your context if applicable.
 - When a scheduled task encounters a critical blocker (missing auth, unavailable API, required env var not set):
   1. Write a local completion record documenting the error
   2. Post a failure notification to the relevant Slack channel — include task name, error type, and what was missing
   3. Do NOT retry indefinitely — document once, notify once, exit cleanly
   Example: "Scheduled task `pr-coverage-poll` failed: required API token not available. Calls skipped. Check token injection in session config."
+
+### Thread Discipline (ALL agents, ALL groups)
+
+**Always reply in the thread that triggered your work.** When your task came from a Slack message (human or dispatch-routed), reply in that thread using `send_message` with the `thread_ts` from your context. Never post channel-level messages for threaded work.
+
+- The `thread_ts` value is provided at the top of your context if applicable.
+- **Dispatch-routed tasks:** The `[DISPATCH-ROUTED]` message IS your thread. Reply there.
+- **Human-triggered tasks:** The human's message IS your thread. Reply there.
+- **Scheduled/cron tasks:** No parent thread — post to the channel as a new message.
+
+### Noise Control (ALL agents, ALL groups)
+
+**Human-facing channels (#dev-team, #qa-sentinel, #dispatch) are for high-value updates only.** Operational telemetry goes to #fleet-ops.
+
+- **Always post:** Work summaries (PRs opened, QA verdicts, task completed), blockers, questions for operators, failures
+- **Never post:** "Starting work...", "Reading codebase...", "Running tests...", "Polling...", "No changes", intermediate progress, file paths written, state file updates
+- **Never exit silently after completing meaningful work.** Completion records are for machines. Slack summaries are for humans. Both are required.
+- **One message per completed unit of work.** Don't post progress updates followed by a summary — just the summary.
 
 ### Scheduled Task Preamble (REQUIRED for all cron/automated sessions)
 At the start of every scheduled task, before doing any substantive work:
