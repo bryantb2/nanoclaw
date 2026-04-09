@@ -160,6 +160,17 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add token tracking columns to cost_log (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE cost_log ADD COLUMN input_tokens INTEGER DEFAULT 0`);
+    database.exec(`ALTER TABLE cost_log ADD COLUMN output_tokens INTEGER DEFAULT 0`);
+    database.exec(`ALTER TABLE cost_log ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`);
+    database.exec(`ALTER TABLE cost_log ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`);
+    database.exec(`ALTER TABLE cost_log ADD COLUMN cost_source TEXT DEFAULT 'sdk'`);
+  } catch {
+    /* columns already exist */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -802,14 +813,35 @@ function migrateJsonState(): void {
 
 // --- Cost tracking ---
 
+export interface CostLogEntry {
+  costUsd: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  /** 'computed' = from token counts, 'sdk' = from SDK total_cost_usd, 'ipc' = recovered from killed container */
+  costSource?: 'computed' | 'sdk' | 'ipc';
+}
+
 export function appendCostLog(
   groupFolder: string,
   chatJid: string,
   costUsd: number,
+  details?: Omit<CostLogEntry, 'costUsd'>,
 ): void {
   db.prepare(
-    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd) VALUES (?, ?, datetime('now'), ?)`,
-  ).run(groupFolder, chatJid, costUsd);
+    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_source)
+     VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    groupFolder,
+    chatJid,
+    costUsd,
+    details?.inputTokens ?? 0,
+    details?.outputTokens ?? 0,
+    details?.cacheCreationTokens ?? 0,
+    details?.cacheReadTokens ?? 0,
+    details?.costSource ?? 'sdk',
+  );
 }
 
 export function getCostSummary(groupFolder: string): {

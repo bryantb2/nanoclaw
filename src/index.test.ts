@@ -202,7 +202,11 @@ function makeGroup(overrides: Partial<RegisteredGroup> = {}): RegisteredGroup {
 describe('runAgent()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getCostSummaryMock.mockReturnValue({ todayUsd: 0, weekUsd: 0, allTimeUsd: 0 });
+    getCostSummaryMock.mockReturnValue({
+      todayUsd: 0,
+      weekUsd: 0,
+      allTimeUsd: 0,
+    });
     writeTasksSnapshotMock.mockReturnValue(undefined);
     writeGroupsSnapshotMock.mockReturnValue(undefined);
     getAllTasksMock.mockReturnValue([]);
@@ -283,6 +287,7 @@ describe('runAgent()', () => {
         group.folder,
         'slack:C123',
         0.05,
+        expect.objectContaining({ costSource: 'sdk' }),
       );
     });
 

@@ -37,6 +37,42 @@ interface ContainerOutput {
   newSessionId?: string;
   error?: string;
   totalCostUsd?: number;
+  /** Token-level usage breakdown computed from SDK result messages */
+  tokenUsage?: TokenUsage;
+  /** Cost computed from token counts using published Anthropic pricing */
+  computedCostUsd?: number;
+}
+
+interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+/** Anthropic pricing per million tokens (April 2026). */
+const MODEL_PRICING: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
+  // Claude 4 family
+  'claude-opus-4-20250514':          { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
+  'claude-opus-4-0':                 { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
+  'claude-sonnet-4-20250514':        { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
+  'claude-sonnet-4-0':               { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
+  // Claude 3.5 family
+  'claude-3-5-sonnet-20241022':      { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
+  'claude-3-5-haiku-20241022':       { input: 0.80, output: 4,    cacheWrite: 1.00,  cacheRead: 0.08 },
+};
+
+/** Fallback pricing if model is unknown — uses Sonnet 4 rates (most common fleet model). */
+const DEFAULT_PRICING = { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.30 };
+
+function computeCostFromTokens(usage: TokenUsage, model?: string): number {
+  const pricing = (model && MODEL_PRICING[model]) || DEFAULT_PRICING;
+  const cost =
+    (usage.inputTokens * pricing.input / 1_000_000) +
+    (usage.outputTokens * pricing.output / 1_000_000) +
+    (usage.cacheCreationInputTokens * pricing.cacheWrite / 1_000_000) +
+    (usage.cacheReadInputTokens * pricing.cacheRead / 1_000_000);
+  return cost;
 }
 
 interface SessionEntry {
@@ -118,6 +154,28 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+const IPC_COST_FILE = '/workspace/ipc/cost.json';
+
+/**
+ * Write accumulated cost to IPC file so the host can recover cost data
+ * even if the container is killed (timeout, OOM, budget cap).
+ */
+function writeCostToIpc(costUsd: number, usage: TokenUsage): void {
+  try {
+    const data = JSON.stringify({
+      costUsd,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheCreationInputTokens: usage.cacheCreationInputTokens,
+      cacheReadInputTokens: usage.cacheReadInputTokens,
+      updatedAt: new Date().toISOString(),
+    });
+    fs.writeFileSync(IPC_COST_FILE, data);
+  } catch {
+    // Best-effort — IPC dir may not exist in tests
+  }
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -370,6 +428,14 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let detectedModel: string | undefined;
+  // Accumulate token usage across all result messages in this query
+  const accumulatedUsage: TokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+  };
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -456,7 +522,9 @@ async function runQuery(
 
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
+      const initModel = (message as { model?: string }).model;
+      if (initModel) detectedModel = initModel;
+      log(`Session initialized: ${newSessionId}, model: ${detectedModel || 'unknown'}`);
     }
 
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
@@ -467,13 +535,65 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const sdkCost = 'total_cost_usd' in message ? (message as { total_cost_usd?: number }).total_cost_usd ?? 0 : 0;
+
+      // Extract token usage from the result message's usage field
+      const resultUsage = (message as { usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }).usage;
+      if (resultUsage) {
+        // SDK result usage is cumulative within a query — take the latest (largest) values
+        accumulatedUsage.inputTokens = Math.max(accumulatedUsage.inputTokens, resultUsage.input_tokens ?? 0);
+        accumulatedUsage.outputTokens = Math.max(accumulatedUsage.outputTokens, resultUsage.output_tokens ?? 0);
+        accumulatedUsage.cacheCreationInputTokens = Math.max(accumulatedUsage.cacheCreationInputTokens, resultUsage.cache_creation_input_tokens ?? 0);
+        accumulatedUsage.cacheReadInputTokens = Math.max(accumulatedUsage.cacheReadInputTokens, resultUsage.cache_read_input_tokens ?? 0);
+      }
+
+      // Extract per-model usage breakdown (modelUsage field)
+      const modelUsage = (message as { modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number }> }).modelUsage;
+      if (modelUsage) {
+        // Use modelUsage for more accurate per-model cost calculation
+        let modelComputedCost = 0;
+        for (const [model, usage] of Object.entries(modelUsage)) {
+          if (!detectedModel) detectedModel = model;
+          const mu: TokenUsage = {
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
+            cacheCreationInputTokens: usage.cacheCreationInputTokens ?? 0,
+            cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
+          };
+          modelComputedCost += computeCostFromTokens(mu, model);
+        }
+        if (modelComputedCost > 0) {
+          const computedCost = modelComputedCost;
+          log(`Result #${resultCount}: sdkCost=$${sdkCost.toFixed(4)}, computedCost=$${computedCost.toFixed(4)}, model=${detectedModel || 'unknown'}`);
+          writeOutput({
+            status: 'success',
+            result: textResult || null,
+            newSessionId,
+            totalCostUsd: sdkCost,
+            computedCostUsd: computedCost,
+            tokenUsage: accumulatedUsage,
+          });
+          // Write cost to IPC for recovery on container kill
+          writeCostToIpc(computedCost, accumulatedUsage);
+          continue;
+        }
+      }
+
+      // Fallback: compute from aggregate usage if modelUsage wasn't available
+      const computedCost = computeCostFromTokens(accumulatedUsage, detectedModel);
+      log(`Result #${resultCount}: sdkCost=$${sdkCost.toFixed(4)}, computedCost=$${computedCost.toFixed(4)} (fallback), model=${detectedModel || 'unknown'}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
         newSessionId,
-        totalCostUsd: 'total_cost_usd' in message ? (message as { total_cost_usd?: number }).total_cost_usd ?? 0 : 0,
+        totalCostUsd: sdkCost,
+        computedCostUsd: computedCost > 0 ? computedCost : undefined,
+        tokenUsage: resultUsage ? accumulatedUsage : undefined,
       });
+      // Write cost to IPC for recovery on container kill
+      if (computedCost > 0 || sdkCost > 0) {
+        writeCostToIpc(computedCost > 0 ? computedCost : sdkCost, accumulatedUsage);
+      }
     }
   }
 

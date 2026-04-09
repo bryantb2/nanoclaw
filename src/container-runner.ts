@@ -33,6 +33,58 @@ const onecli = new OneCLI({ url: ONECLI_URL });
 
 const GITHUB_APP_ID = '3043813';
 
+interface IpcCostData {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+/**
+ * Read cost data from the IPC cost file written by the agent-runner.
+ * Used to recover cost when containers are killed (timeout, OOM, budget cap).
+ */
+function readIpcCostFile(groupFolder: string): IpcCostData | null {
+  try {
+    const ipcDir = resolveGroupIpcPath(groupFolder);
+    const costFile = path.join(ipcDir, 'cost.json');
+    if (!fs.existsSync(costFile)) return null;
+    const data = JSON.parse(fs.readFileSync(costFile, 'utf-8'));
+    // Clean up after reading
+    fs.unlinkSync(costFile);
+    return data as IpcCostData;
+  } catch {
+    return null;
+  }
+}
+
+/** Pick the best available cost: prefer computed (from tokens), fall back to SDK, then IPC recovery. */
+function bestCost(
+  accumulatedSdk: number,
+  accumulatedComputed: number,
+  ipcCost: IpcCostData | null,
+): { costUsd: number; tokenUsage?: TokenUsage } {
+  if (accumulatedComputed > 0) {
+    return { costUsd: accumulatedComputed };
+  }
+  if (accumulatedSdk > 0) {
+    return { costUsd: accumulatedSdk };
+  }
+  if (ipcCost && ipcCost.costUsd > 0) {
+    return {
+      costUsd: ipcCost.costUsd,
+      tokenUsage: {
+        inputTokens: ipcCost.inputTokens,
+        outputTokens: ipcCost.outputTokens,
+        cacheCreationInputTokens: ipcCost.cacheCreationInputTokens,
+        cacheReadInputTokens: ipcCost.cacheReadInputTokens,
+      },
+    };
+  }
+  return { costUsd: 0 };
+}
+
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -49,12 +101,23 @@ export interface ContainerInput {
   threadTs?: string;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
   error?: string;
   totalCostUsd?: number;
+  /** Cost computed from token counts using Anthropic pricing (more reliable than SDK totalCostUsd) */
+  computedCostUsd?: number;
+  /** Token-level usage breakdown */
+  tokenUsage?: TokenUsage;
 }
 
 interface VolumeMount {
@@ -444,11 +507,23 @@ export async function runContainerAgent(
                 parsed.totalCostUsd,
               );
             }
+            // Track computed cost (from token counts) — same cumulative logic
+            if (parsed.computedCostUsd && parsed.computedCostUsd > 0) {
+              currentQueryMaxComputedCost = Math.max(
+                currentQueryMaxComputedCost,
+                parsed.computedCostUsd,
+              );
+            }
+            if (parsed.tokenUsage) {
+              lastTokenUsage = parsed.tokenUsage;
+            }
             // Session-update marker (null result, no cost) = query() boundary.
             // Flush the current query's cost and reset for the next query.
             if (parsed.result === null && !parsed.totalCostUsd) {
               accumulatedCostUsd += currentQueryMaxCost;
               currentQueryMaxCost = 0;
+              accumulatedComputedCost += currentQueryMaxComputedCost;
+              currentQueryMaxComputedCost = 0;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
@@ -492,6 +567,10 @@ export async function runContainerAgent(
     let hadStreamingOutput = false;
     let accumulatedCostUsd = 0;
     let currentQueryMaxCost = 0;
+    // Track computed cost (from token counts) separately — more reliable than SDK totalCostUsd
+    let accumulatedComputedCost = 0;
+    let currentQueryMaxComputedCost = 0;
+    let lastTokenUsage: TokenUsage | undefined;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -561,12 +640,17 @@ export async function runContainerAgent(
             // Flush any remaining query cost before resolving
             accumulatedCostUsd += currentQueryMaxCost;
             currentQueryMaxCost = 0;
+            accumulatedComputedCost += currentQueryMaxComputedCost;
+            currentQueryMaxComputedCost = 0;
+            const cost = bestCost(accumulatedCostUsd, accumulatedComputedCost, null);
             resolve({
               status: 'success',
               result: null,
               newSessionId,
-              totalCostUsd:
-                accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+              totalCostUsd: cost.costUsd > 0 ? cost.costUsd : undefined,
+              computedCostUsd:
+                accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined,
+              tokenUsage: lastTokenUsage,
             });
           });
           return;
@@ -577,10 +661,23 @@ export async function runContainerAgent(
           'Container timed out with no output',
         );
 
+        // Recover cost from IPC file — container may have consumed tokens before timeout
+        const ipcCost = readIpcCostFile(group.folder);
+        const recovered = bestCost(0, 0, ipcCost);
+        if (recovered.costUsd > 0) {
+          logger.info(
+            { group: group.name, recoveredCost: recovered.costUsd },
+            'Recovered cost from IPC file after timeout',
+          );
+        }
+
         resolve({
           status: 'error',
           result: null,
           error: `Container timed out after ${configTimeout}ms`,
+          totalCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
+          computedCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
+          tokenUsage: recovered.tokenUsage,
         });
         return;
       }
@@ -618,9 +715,17 @@ export async function runContainerAgent(
             ``,
           );
         }
+        // Scrub credentials from container args before logging
+        const scrubbed = containerArgs.map((arg, i) => {
+          const prev = containerArgs[i - 1];
+          if (prev === '-e' && /^(ANTHROPIC_API_KEY|LINEAR_API_KEY|GOOGLE_SERVICE_ACCOUNT_JSON|GITHUB_APP_PRIVATE_KEY)=/.test(arg)) {
+            return arg.replace(/=.*/, '=[REDACTED]');
+          }
+          return arg;
+        });
         logLines.push(
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          scrubbed.join(' '),
           ``,
           `=== Mounts ===`,
           mounts
@@ -669,11 +774,22 @@ export async function runContainerAgent(
         // Flush remaining query cost even on error — API tokens were still consumed
         accumulatedCostUsd += currentQueryMaxCost;
         currentQueryMaxCost = 0;
+        accumulatedComputedCost += currentQueryMaxComputedCost;
+        currentQueryMaxComputedCost = 0;
+        // Try IPC recovery if no cost was accumulated from output markers
+        const ipcCostOnError = (accumulatedCostUsd === 0 && accumulatedComputedCost === 0)
+          ? readIpcCostFile(group.folder)
+          : null;
+        const errorCost = bestCost(accumulatedCostUsd, accumulatedComputedCost, ipcCostOnError);
         resolve({
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-          totalCostUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+          totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+          computedCostUsd:
+            (accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined) ??
+            (ipcCostOnError?.costUsd ? ipcCostOnError.costUsd : undefined),
+          tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
         return;
       }
@@ -693,12 +809,17 @@ export async function runContainerAgent(
           // Flush any remaining query cost before resolving
           accumulatedCostUsd += currentQueryMaxCost;
           currentQueryMaxCost = 0;
+          accumulatedComputedCost += currentQueryMaxComputedCost;
+          currentQueryMaxComputedCost = 0;
+          const successCost = bestCost(accumulatedCostUsd, accumulatedComputedCost, null);
           resolve({
             status: 'success',
             result: null,
             newSessionId,
-            totalCostUsd:
-              accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
+            totalCostUsd: successCost.costUsd > 0 ? successCost.costUsd : undefined,
+            computedCostUsd:
+              accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined,
+            tokenUsage: lastTokenUsage,
           });
         });
         return;
@@ -750,10 +871,16 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
+        // Recover cost from IPC even on parse failure
+        const ipcCostParse = readIpcCostFile(group.folder);
+        const parseCost = bestCost(0, 0, ipcCostParse);
         resolve({
           status: 'error',
           result: null,
           error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+          totalCostUsd: parseCost.costUsd > 0 ? parseCost.costUsd : undefined,
+          computedCostUsd: parseCost.costUsd > 0 ? parseCost.costUsd : undefined,
+          tokenUsage: parseCost.tokenUsage,
         });
       }
     });

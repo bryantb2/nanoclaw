@@ -486,13 +486,32 @@ async function runAgent(
     }
 
     // Track cost if reported (runs for both success and error)
+    // Prefer computedCostUsd (from token counts) over SDK totalCostUsd
+    const effectiveCost = (output.computedCostUsd ?? 0) > 0
+      ? output.computedCostUsd!
+      : (output.totalCostUsd ?? 0);
+    const costSource = (output.computedCostUsd ?? 0) > 0
+      ? 'computed' as const
+      : (output.tokenUsage ? 'ipc' as const : 'sdk' as const);
     logger.debug(
-      { group: group.name, totalCostUsd: output.totalCostUsd ?? null },
+      {
+        group: group.name,
+        sdkCost: output.totalCostUsd ?? null,
+        computedCost: output.computedCostUsd ?? null,
+        effectiveCost,
+        costSource,
+      },
       'Agent run cost data',
     );
-    if ((output.totalCostUsd ?? 0) > 0) {
+    if (effectiveCost > 0) {
       try {
-        appendCostLog(group.folder, chatJid, output.totalCostUsd!);
+        appendCostLog(group.folder, chatJid, effectiveCost, {
+          inputTokens: output.tokenUsage?.inputTokens,
+          outputTokens: output.tokenUsage?.outputTokens,
+          cacheCreationTokens: output.tokenUsage?.cacheCreationInputTokens,
+          cacheReadTokens: output.tokenUsage?.cacheReadInputTokens,
+          costSource,
+        });
         const summary = getCostSummary(group.folder);
         const groupDir = resolveGroupFolderPath(group.folder);
         const costSummaryPath = path.join(groupDir, 'cost-summary.json');
@@ -510,7 +529,7 @@ async function runAgent(
           ),
         );
         logger.debug(
-          { group: group.name, costUsd: output.totalCostUsd },
+          { group: group.name, costUsd: effectiveCost, costSource },
           'Cost logged and summary written',
         );
       } catch (err) {
