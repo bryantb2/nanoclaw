@@ -340,6 +340,31 @@ When you receive `@Fleet reject recommendation #N -- {reason}`:
 2. Revise the recommendation based on the stated reason
 3. Acknowledge: "Noted. Revised recommendation #N logged."
 
+### Completion Signal Handling
+
+When you receive a message containing `[COMPLETION]` (from any agent group):
+
+1. **Parse the signal:** Extract group name, ticket IDs, PR URLs, and status from the message
+2. **Load build loop state** from `/workspace/output/build-loop-state.json`
+3. **For each ticket mentioned:**
+   - If ticket is in `in_flight` with `stage: "waiting_for_pr"` and signal reports a PR:
+     - Read the source group's `/workspace/extra/{group}/latest.json` for the full completion record
+     - Verify `cross_loop_signals` contains `pr_ready_for_review` with matching ticket ID
+     - Advance to `stage: "waiting_for_qa"`, set `pr_url`, `qa_dispatched_at`
+     - Dispatch QA gate to #qa-sentinel via IPC (same format as build loop Step 2)
+   - If ticket is in `in_flight` with `stage: "waiting_for_qa"` and signal is from qa-sentinel:
+     - Read qa-sentinel's completion record for `qa_result` signal
+     - If passed: update Linear to "In Review", move to `completed[]`, post summary to #dispatch
+     - If failed: post failure to #dispatch, route fix request to dev-team, revert to `waiting_for_pr`
+   - If ticket is NOT in `in_flight`: add it with appropriate stage based on the signal
+4. **Save updated state** to `/workspace/output/build-loop-state.json`
+5. **Post ONE summary to #dispatch via IPC** (only if stage transitions occurred):
+   ```
+   [COMPLETION] {GROUP} — {TICKET_ID}: {old_stage} → {new_stage} (PR #{N})
+   ```
+
+This is the event-driven fast path. The 30-minute build loop poll is a safety net that catches anything this handler misses.
+
 ### Manual Ticket Intake
 
 When a human posts a Linear ticket URL to #dispatch (e.g., `https://linear.app/...`):
