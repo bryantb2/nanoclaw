@@ -58,9 +58,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
     // Anchor to the scheduled time, not now, to prevent drift.
     // Skip past any missed intervals so we always land in the future.
     // If next_run is NULL (e.g. task created without it), fall back to now.
-    const anchor = task.next_run
-      ? new Date(task.next_run).getTime()
-      : now;
+    const anchor = task.next_run ? new Date(task.next_run).getTime() : now;
     let next = anchor + ms;
     while (next <= now) {
       next += ms;
@@ -224,13 +222,25 @@ async function runTask(
     // FOUND-07: Budget exhaustion is reported as an error with "budget" in the
     // message. Send a clear Slack notification so operators know the task was
     // capped — not silently dropped.
+    // Suppress repeat notifications: if the previous run also hit budget,
+    // don't spam the channel. Operators already know. Only notify on the
+    // FIRST occurrence (or after a successful run resets last_result).
     if (error && /budget/i.test(error)) {
-      const cap = (task.max_budget_usd ?? DEFAULT_MAX_BUDGET_USD).toFixed(2);
-      await deps.sendMessage(
-        task.chat_jid,
-        `[cron] Task \`${task.id}\` reached its $${cap} budget cap and stopped early. ` +
-          `Check #fleet-ops audit trail for partial results. Increase budget or split the task.`,
-      );
+      const previousAlsoBudget =
+        task.last_result && /budget/i.test(task.last_result);
+      if (!previousAlsoBudget) {
+        const cap = (task.max_budget_usd ?? DEFAULT_MAX_BUDGET_USD).toFixed(2);
+        await deps.sendMessage(
+          task.chat_jid,
+          `[cron] Task \`${task.id}\` reached its $${cap} budget cap and stopped early. ` +
+            `Check #fleet-ops audit trail for partial results. Increase budget or split the task.`,
+        );
+      } else {
+        logger.info(
+          { taskId: task.id },
+          'Budget error repeated — suppressing duplicate Slack notification',
+        );
+      }
     }
 
     logger.info(
