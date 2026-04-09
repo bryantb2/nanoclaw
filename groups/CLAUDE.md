@@ -708,6 +708,26 @@ This includes:
 
 1. Write the completion record to `/workspace/output/latest.json` (always overwrite).
 2. Copy it to `/workspace/output/archive/{ISO_TIMESTAMP_with_hyphens}.json` — e.g., `2026-03-30T10-00-00.json`.
+
+### Dispatch Notification (ALL agents, MANDATORY after completion record)
+
+After writing your completion record, notify #dispatch via IPC so the build loop picks up your work immediately — do NOT wait for the next 30-minute poll cycle.
+
+Write to `/workspace/ipc/messages/done-{TIMESTAMP}.json` using the Write tool:
+```json
+{
+  "type": "message",
+  "chatJid": "DISPATCH_CHANNEL_JID",
+  "text": "@Fleet [COMPLETION] {YOUR_GROUP} finished: {TICKET_IDS}. PR(s): {PR_URLS}. Status: {success|error}. Completion record written."
+}
+```
+
+**Rules:**
+- Use the `@Fleet` prefix so the message triggers dispatch processing
+- Include `[COMPLETION]` tag so dispatch can distinguish this from routed tasks
+- Keep the message to one line — dispatch parses it, humans glance at it
+- This fires for ALL autonomous tasks (cron + dispatch-routed) that write completion records
+- Do NOT send this for human-triggered conversations (no completion record = no ping)
 3. Delete any files in `/workspace/output/archive/` with a date prefix older than 7 days (compare filename date to today's date).
 
 ### Schema Version 1.0
