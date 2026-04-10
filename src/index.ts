@@ -27,12 +27,12 @@ import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
+import { logCostFromOutput, writeCostSummaryFile } from './cost-logging.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
-  appendCostLog,
   getCostSummary,
   getAndClearInFlightTasks,
   getMessagesSince,
@@ -378,6 +378,7 @@ async function runAgent(
   threadTs?: string,
   retryCount = 0,
 ): Promise<'success' | 'error'> {
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -485,37 +486,13 @@ async function runAgent(
       // Still log cost on error — a killed/failed container still consumed API tokens
     }
 
-    // Track cost if reported (runs for both success and error)
-    logger.debug(
-      { group: group.name, totalCostUsd: output.totalCostUsd ?? null },
-      'Agent run cost data',
+    const costResult = logCostFromOutput(
+      { groupFolder: group.folder, chatJid, runId },
+      output,
     );
-    if ((output.totalCostUsd ?? 0) > 0) {
-      try {
-        appendCostLog(group.folder, chatJid, output.totalCostUsd!);
-        const summary = getCostSummary(group.folder);
-        const groupDir = resolveGroupFolderPath(group.folder);
-        const costSummaryPath = path.join(groupDir, 'cost-summary.json');
-        fs.writeFileSync(
-          costSummaryPath,
-          JSON.stringify(
-            {
-              today_usd: summary.todayUsd,
-              week_usd: summary.weekUsd,
-              all_time_usd: summary.allTimeUsd,
-              last_updated: new Date().toISOString(),
-            },
-            null,
-            2,
-          ),
-        );
-        logger.debug(
-          { group: group.name, costUsd: output.totalCostUsd },
-          'Cost logged and summary written',
-        );
-      } catch (err) {
-        logger.warn({ group: group.name, err }, 'Failed to write cost summary');
-      }
+    if (costResult) {
+      const groupDir = resolveGroupFolderPath(group.folder);
+      writeCostSummaryFile(group.folder, groupDir, fs, path);
     }
 
     return output.status === 'error' ? 'error' : 'success';

@@ -160,6 +160,34 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add token tracking columns to cost_log (migration for existing DBs)
+  // Each ALTER in its own try/catch so partial migrations don't skip remaining columns
+  for (const col of [
+    `input_tokens INTEGER DEFAULT 0`,
+    `output_tokens INTEGER DEFAULT 0`,
+    `cache_creation_tokens INTEGER DEFAULT 0`,
+    `cache_read_tokens INTEGER DEFAULT 0`,
+    `cost_source TEXT DEFAULT 'sdk'`,
+  ]) {
+    try {
+      database.exec(`ALTER TABLE cost_log ADD COLUMN ${col}`);
+    } catch {
+      /* column already exists */
+    }
+  }
+
+  // Add run_id to cost_log and task_run_logs for work association
+  try {
+    database.exec(`ALTER TABLE cost_log ADD COLUMN run_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE task_run_logs ADD COLUMN run_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -583,8 +611,8 @@ export function updateTaskAfterRun(
 export function logTaskRun(log: TaskRunLog): void {
   db.prepare(
     `
-    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     log.task_id,
@@ -593,6 +621,7 @@ export function logTaskRun(log: TaskRunLog): void {
     log.status,
     log.result,
     log.error,
+    log.run_id ?? null,
   );
 }
 
@@ -802,14 +831,37 @@ function migrateJsonState(): void {
 
 // --- Cost tracking ---
 
+export interface CostLogEntry {
+  costUsd: number;
+  runId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  /** 'computed' = from token counts, 'sdk' = from SDK total_cost_usd, 'ipc' = recovered from killed container */
+  costSource?: 'computed' | 'sdk' | 'ipc';
+}
+
 export function appendCostLog(
   groupFolder: string,
   chatJid: string,
   costUsd: number,
+  details?: Omit<CostLogEntry, 'costUsd'>,
 ): void {
   db.prepare(
-    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd) VALUES (?, ?, datetime('now'), ?)`,
-  ).run(groupFolder, chatJid, costUsd);
+    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd, run_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_source)
+     VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    groupFolder,
+    chatJid,
+    costUsd,
+    details?.runId ?? null,
+    details?.inputTokens ?? 0,
+    details?.outputTokens ?? 0,
+    details?.cacheCreationTokens ?? 0,
+    details?.cacheReadTokens ?? 0,
+    details?.costSource ?? 'sdk',
+  );
 }
 
 export function getCostSummary(groupFolder: string): {

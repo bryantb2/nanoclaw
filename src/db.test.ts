@@ -16,6 +16,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  logTaskRun,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
@@ -671,6 +672,223 @@ describe('getCostSummary', () => {
     // todayUsd and weekUsd should also include these (inserted now)
     expect(summary.todayUsd).toBeCloseTo(0.008);
     expect(summary.weekUsd).toBeCloseTo(0.008);
+  });
+});
+
+describe('appendCostLog with details', () => {
+  it('stores token breakdown and cost source', () => {
+    appendCostLog('dispatch', 'slack:C123', 0.45, {
+      runId: '1234567890-ab12',
+      inputTokens: 5000,
+      outputTokens: 2000,
+      cacheCreationTokens: 500,
+      cacheReadTokens: 3000,
+      costSource: 'computed',
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM cost_log WHERE group_folder = ?')
+      .get('dispatch') as Record<string, unknown>;
+
+    expect(row.cost_usd).toBeCloseTo(0.45);
+    expect(row.run_id).toBe('1234567890-ab12');
+    expect(row.input_tokens).toBe(5000);
+    expect(row.output_tokens).toBe(2000);
+    expect(row.cache_creation_tokens).toBe(500);
+    expect(row.cache_read_tokens).toBe(3000);
+    expect(row.cost_source).toBe('computed');
+  });
+
+  it('defaults token columns to 0 and source to sdk when details omitted', () => {
+    appendCostLog('main', 'slack:C456', 0.10);
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM cost_log WHERE group_folder = ?')
+      .get('main') as Record<string, unknown>;
+
+    expect(row.run_id).toBeNull();
+    expect(row.input_tokens).toBe(0);
+    expect(row.output_tokens).toBe(0);
+    expect(row.cache_creation_tokens).toBe(0);
+    expect(row.cache_read_tokens).toBe(0);
+    expect(row.cost_source).toBe('sdk');
+  });
+});
+
+describe('logTaskRun with run_id', () => {
+  function createTestTask(id: string) {
+    createTask({
+      id,
+      group_folder: 'dispatch',
+      chat_jid: 'slack:C123',
+      prompt: 'test',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: new Date().toISOString(),
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  it('stores run_id in task_run_logs', () => {
+    createTestTask('dispatch-build-loop');
+    logTaskRun({
+      task_id: 'dispatch-build-loop',
+      run_at: new Date().toISOString(),
+      duration_ms: 5000,
+      status: 'success',
+      result: 'Done',
+      error: null,
+      run_id: '1234567890-ab12',
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM task_run_logs WHERE task_id = ?')
+      .get('dispatch-build-loop') as Record<string, unknown>;
+
+    expect(row.run_id).toBe('1234567890-ab12');
+    expect(row.status).toBe('success');
+  });
+
+  it('allows null run_id for backwards compatibility', () => {
+    createTestTask('nightly-review');
+    logTaskRun({
+      task_id: 'nightly-review',
+      run_at: new Date().toISOString(),
+      duration_ms: 3000,
+      status: 'success',
+      result: null,
+      error: null,
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM task_run_logs WHERE task_id = ?')
+      .get('nightly-review') as Record<string, unknown>;
+
+    expect(row.run_id).toBeNull();
+  });
+});
+
+describe('run_id linking', () => {
+  it('joins cost_log and task_run_logs via run_id', () => {
+    const runId = '9999999999-zz99';
+
+    createTask({
+      id: 'dispatch-build-loop',
+      group_folder: 'dispatch',
+      chat_jid: 'slack:C123',
+      prompt: 'build',
+      schedule_type: 'cron',
+      schedule_value: '*/30 * * * *',
+      context_mode: 'isolated',
+      next_run: new Date().toISOString(),
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+
+    appendCostLog('dispatch', 'slack:C123', 0.35, {
+      runId,
+      costSource: 'computed',
+    });
+
+    logTaskRun({
+      task_id: 'dispatch-build-loop',
+      run_at: new Date().toISOString(),
+      duration_ms: 8000,
+      status: 'success',
+      result: 'Built PR',
+      error: null,
+      run_id: runId,
+    });
+
+    const db = _getDb();
+    const joined = db
+      .prepare(
+        `SELECT t.task_id, c.cost_usd, c.cost_source
+         FROM task_run_logs t
+         JOIN cost_log c ON c.run_id = t.run_id
+         WHERE t.run_id = ?`,
+      )
+      .get(runId) as { task_id: string; cost_usd: number; cost_source: string };
+
+    expect(joined.task_id).toBe('dispatch-build-loop');
+    expect(joined.cost_usd).toBeCloseTo(0.35);
+    expect(joined.cost_source).toBe('computed');
+  });
+
+  it('human-triggered runs have cost_log but no task_run_logs match', () => {
+    const runId = '8888888888-hm01';
+
+    appendCostLog('dev-team', 'slack:C789', 1.20, {
+      runId,
+      costSource: 'sdk',
+    });
+
+    const db = _getDb();
+    const orphan = db
+      .prepare(
+        `SELECT c.run_id, c.cost_usd
+         FROM cost_log c
+         LEFT JOIN task_run_logs t ON t.run_id = c.run_id
+         WHERE c.run_id = ? AND t.run_id IS NULL`,
+      )
+      .get(runId) as { run_id: string; cost_usd: number } | undefined;
+
+    expect(orphan).toBeDefined();
+    expect(orphan!.cost_usd).toBeCloseTo(1.20);
+  });
+});
+
+describe('cost_log schema migration', () => {
+  it('creates all token tracking columns on fresh DB', () => {
+    const db = _getDb();
+    const cols = db
+      .prepare('PRAGMA table_info(cost_log)')
+      .all() as Array<{ name: string }>;
+    const colNames = cols.map((c) => c.name);
+
+    expect(colNames).toContain('input_tokens');
+    expect(colNames).toContain('output_tokens');
+    expect(colNames).toContain('cache_creation_tokens');
+    expect(colNames).toContain('cache_read_tokens');
+    expect(colNames).toContain('cost_source');
+    expect(colNames).toContain('run_id');
+  });
+
+  it('creates run_id column on task_run_logs', () => {
+    const db = _getDb();
+    const cols = db
+      .prepare('PRAGMA table_info(task_run_logs)')
+      .all() as Array<{ name: string }>;
+    const colNames = cols.map((c) => c.name);
+
+    expect(colNames).toContain('run_id');
+  });
+
+  it('re-initializing the DB does not break when columns already exist', () => {
+    // Simulate re-running init on an already-migrated DB
+    // _initTestDatabase calls createSchema which runs all migrations
+    expect(() => _initTestDatabase()).not.toThrow();
+    expect(() => _initTestDatabase()).not.toThrow();
+
+    // Verify columns still work
+    appendCostLog('main', 'slack:C1', 0.05, {
+      runId: 'test-run',
+      costSource: 'computed',
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT run_id, cost_source FROM cost_log WHERE group_folder = ?')
+      .get('main') as { run_id: string; cost_source: string };
+
+    expect(row.run_id).toBe('test-run');
+    expect(row.cost_source).toBe('computed');
   });
 });
 

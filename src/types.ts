@@ -79,6 +79,7 @@ export interface TaskRunLog {
   status: 'success' | 'error';
   result: string | null;
   error: string | null;
+  run_id?: string;
 }
 
 // --- Completion record schema ---

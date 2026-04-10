@@ -13,6 +13,7 @@ import {
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { logCostFromOutput } from './cost-logging.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -86,6 +87,7 @@ async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const startTime = Date.now();
   let groupDir: string;
   try {
@@ -215,9 +217,13 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
       result = output.result;
     }
+
+    logCostFromOutput(
+      { groupFolder: task.group_folder, chatJid: task.chat_jid, runId },
+      output,
+    );
 
     // FOUND-07: Budget exhaustion is reported as an error with "budget" in the
     // message. Send a clear Slack notification so operators know the task was
@@ -262,6 +268,7 @@ async function runTask(
     status: error ? 'error' : 'success',
     result,
     error,
+    run_id: runId,
   });
 
   const nextRun = computeNextRun(task);
