@@ -16,6 +16,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  isIpcInjectedMessage,
   logTaskRun,
   setRegisteredGroup,
   storeChatMetadata,
@@ -944,5 +945,67 @@ describe('database initialization safety', () => {
     // The new in-memory db has the system default (5000), NOT our sentinel (1234)
     // This proves _initTestDatabase creates a fresh DB without our pragma call
     expect(result[0].timeout).not.toBe(1234);
+  });
+});
+
+describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
+  beforeEach(() => {
+    // messages.chat_jid has a FK to chats(jid); seed both chats up front
+    storeChatMetadata('slack:dev-team', '2026-04-10T00:00:00.000Z');
+    storeChatMetadata('slack:qa-sentinel', '2026-04-10T00:00:00.000Z');
+  });
+
+  it('returns true for a row written by the IPC injection path', () => {
+    storeMessage({
+      id: '1775796300.543699',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: '@Fleet [DISPATCH-ROUTED] work',
+      timestamp: '2026-04-10T07:00:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    expect(isIpcInjectedMessage('1775796300.543699', 'slack:dev-team')).toBe(
+      true,
+    );
+  });
+
+  it('returns false for a non-ipc row (regular bot/user message)', () => {
+    storeMessage({
+      id: '1775796400.000001',
+      chat_jid: 'slack:dev-team',
+      sender: 'U0BOT123',
+      sender_name: 'Fleet',
+      content: 'bot output',
+      timestamp: '2026-04-10T07:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    expect(isIpcInjectedMessage('1775796400.000001', 'slack:dev-team')).toBe(
+      false,
+    );
+  });
+
+  it('returns false when no row exists', () => {
+    expect(isIpcInjectedMessage('nonexistent.ts', 'slack:dev-team')).toBe(
+      false,
+    );
+  });
+
+  it('returns false when the id matches but chat_jid differs', () => {
+    storeMessage({
+      id: '1775796500.000001',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: 'injected',
+      timestamp: '2026-04-10T07:02:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    expect(isIpcInjectedMessage('1775796500.000001', 'slack:qa-sentinel')).toBe(
+      false,
+    );
   });
 });

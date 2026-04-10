@@ -39,6 +39,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  isIpcInjectedMessage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -791,6 +792,15 @@ async function main(): Promise<void> {
           logger.debug({ err }, 'Failed to add eyes reaction'),
         );
       }
+      // Option B race guard: the Slack webhook echoes bot messages back with
+      // the real ts as id. When IPC routing already injected a row at that
+      // (id, chat_jid) with sender='ipc' and is_bot_message=0, replacing it
+      // with the echo (is_bot_message=1) would make the trigger invisible to
+      // getNewMessages and silently drop the dispatched task. Skip the echo
+      // when the IPC injection already owns the row.
+      if (msg.is_bot_message && isIpcInjectedMessage(msg.id, chatJid)) {
+        return;
+      }
       storeMessage(msg);
     },
     onChatMetadata: (
@@ -990,15 +1000,14 @@ async function main(): Promise<void> {
       // so epoch format would be lexicographically less than ISO and
       // never picked up.
       const ts = new Date().toISOString();
-      // Option B: prefer the real Slack ts returned by sendMessage as the
+      // Option B: use the real Slack ts returned by sendMessage as the
       // message id so selectThreadMessage picks it up as a valid thread_ts
-      // anchor. Fall back to a synthetic ipc- id if sendMessage returned
-      // undefined (channel disconnected, postMessage failed) — these get
-      // filtered by isValidThreadTs so the reply still posts to the main
-      // channel (Option A safety net behavior).
+      // anchor. Fall back to a synthetic ipc- id when sendMessage returned
+      // undefined (channel disconnected or postMessage failed). The synthetic
+      // id is then filtered by isValidThreadTs and the reply posts to the
+      // main channel (Option A safety net).
       const rand = Math.random().toString(36).slice(2, 8);
-      const id =
-        realTs && isValidThreadTs(realTs) ? realTs : `ipc-${ts}-${rand}`;
+      const id = realTs ?? `ipc-${ts}-${rand}`;
       storeMessage({
         id,
         chat_jid: chatJid,
