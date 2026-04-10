@@ -237,10 +237,10 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string): Promise<string | undefined> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return;
+      return undefined;
     }
 
     try {
@@ -260,8 +260,14 @@ export class TelegramChannel implements Channel {
         }
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
+      // Telegram has no Slack-thread_ts equivalent for the IPC routing path.
+      // We return undefined so injectMessage falls back to a synthetic id —
+      // IPC routing is currently Slack-only; if it expands to Telegram in the
+      // future, capture message_id from sendTelegramMessage's response here.
+      return undefined;
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      return undefined;
     }
   }
 

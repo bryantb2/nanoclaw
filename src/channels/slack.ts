@@ -422,7 +422,7 @@ export class SlackChannel implements Channel {
     jid: string,
     text: string,
     opts?: { threadTs?: string },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -431,33 +431,41 @@ export class SlackChannel implements Channel {
         { jid, queueSize: this.outgoingQueue.length },
         'Slack disconnected, message queued',
       );
-      return;
+      return undefined;
     }
 
     try {
-      // Slack limits messages to ~4000 characters; split if needed
+      // Slack limits messages to ~4000 characters; split if needed.
+      // When splitting, return the FIRST chunk's ts — subsequent replies
+      // thread under the first message (which is where users land when
+      // clicking the thread in their client).
+      let firstTs: string | undefined;
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({
+        const resp = await this.app.client.chat.postMessage({
           channel: channelId,
           text: markdownToSlackMrkdwn(text),
           ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
         });
+        firstTs = resp.ts;
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          await this.app.client.chat.postMessage({
+          const resp = await this.app.client.chat.postMessage({
             channel: channelId,
             text: markdownToSlackMrkdwn(text.slice(i, i + MAX_MESSAGE_LENGTH)),
             ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
           });
+          if (firstTs === undefined) firstTs = resp.ts;
         }
       }
-      logger.info({ jid, length: text.length }, 'Slack message sent');
+      logger.info({ jid, length: text.length, ts: firstTs }, 'Slack message sent');
+      return firstTs;
     } catch (err) {
       this.outgoingQueue.push({ jid, text });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send Slack message, queued',
       );
+      return undefined;
     }
   }
 
