@@ -378,6 +378,7 @@ async function runAgent(
   threadTs?: string,
   retryCount = 0,
 ): Promise<'success' | 'error'> {
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -515,6 +516,7 @@ async function runAgent(
     if (effectiveCost > 0) {
       try {
         appendCostLog(group.folder, chatJid, effectiveCost, {
+          runId,
           inputTokens: output.tokenUsage?.inputTokens,
           outputTokens: output.tokenUsage?.outputTokens,
           cacheCreationTokens: output.tokenUsage?.cacheCreationInputTokens,

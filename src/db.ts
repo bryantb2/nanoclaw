@@ -162,13 +162,35 @@ function createSchema(database: Database.Database): void {
 
   // Add token tracking columns to cost_log (migration for existing DBs)
   try {
-    database.exec(`ALTER TABLE cost_log ADD COLUMN input_tokens INTEGER DEFAULT 0`);
-    database.exec(`ALTER TABLE cost_log ADD COLUMN output_tokens INTEGER DEFAULT 0`);
-    database.exec(`ALTER TABLE cost_log ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`);
-    database.exec(`ALTER TABLE cost_log ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`);
-    database.exec(`ALTER TABLE cost_log ADD COLUMN cost_source TEXT DEFAULT 'sdk'`);
+    database.exec(
+      `ALTER TABLE cost_log ADD COLUMN input_tokens INTEGER DEFAULT 0`,
+    );
+    database.exec(
+      `ALTER TABLE cost_log ADD COLUMN output_tokens INTEGER DEFAULT 0`,
+    );
+    database.exec(
+      `ALTER TABLE cost_log ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`,
+    );
+    database.exec(
+      `ALTER TABLE cost_log ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`,
+    );
+    database.exec(
+      `ALTER TABLE cost_log ADD COLUMN cost_source TEXT DEFAULT 'sdk'`,
+    );
   } catch {
     /* columns already exist */
+  }
+
+  // Add run_id to cost_log and task_run_logs for work association
+  try {
+    database.exec(`ALTER TABLE cost_log ADD COLUMN run_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE task_run_logs ADD COLUMN run_id TEXT`);
+  } catch {
+    /* column already exists */
   }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
@@ -594,8 +616,8 @@ export function updateTaskAfterRun(
 export function logTaskRun(log: TaskRunLog): void {
   db.prepare(
     `
-    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     log.task_id,
@@ -604,6 +626,7 @@ export function logTaskRun(log: TaskRunLog): void {
     log.status,
     log.result,
     log.error,
+    log.run_id ?? null,
   );
 }
 
@@ -815,6 +838,7 @@ function migrateJsonState(): void {
 
 export interface CostLogEntry {
   costUsd: number;
+  runId?: string;
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationTokens?: number;
@@ -830,12 +854,13 @@ export function appendCostLog(
   details?: Omit<CostLogEntry, 'costUsd'>,
 ): void {
   db.prepare(
-    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_source)
-     VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO cost_log (group_folder, chat_jid, run_at, cost_usd, run_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_source)
+     VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     groupFolder,
     chatJid,
     costUsd,
+    details?.runId ?? null,
     details?.inputTokens ?? 0,
     details?.outputTokens ?? 0,
     details?.cacheCreationTokens ?? 0,

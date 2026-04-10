@@ -14,6 +14,7 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  appendCostLog,
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -86,6 +87,7 @@ async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const startTime = Date.now();
   let groupDir: string;
   try {
@@ -215,8 +217,36 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
       result = output.result;
+    }
+
+    // Log cost for scheduled tasks (same logic as runAgent in index.ts)
+    const effectiveCost =
+      (output.computedCostUsd ?? 0) > 0
+        ? output.computedCostUsd!
+        : (output.totalCostUsd ?? 0);
+    if (effectiveCost > 0) {
+      const costSource =
+        (output.computedCostUsd ?? 0) > 0
+          ? ('computed' as const)
+          : (output.totalCostUsd ?? 0) > 0
+            ? ('sdk' as const)
+            : ('ipc' as const);
+      try {
+        appendCostLog(task.group_folder, task.chat_jid, effectiveCost, {
+          runId,
+          inputTokens: output.tokenUsage?.inputTokens,
+          outputTokens: output.tokenUsage?.outputTokens,
+          cacheCreationTokens: output.tokenUsage?.cacheCreationInputTokens,
+          cacheReadTokens: output.tokenUsage?.cacheReadInputTokens,
+          costSource,
+        });
+      } catch (err) {
+        logger.warn(
+          { taskId: task.id, err },
+          'Failed to log task cost',
+        );
+      }
     }
 
     // FOUND-07: Budget exhaustion is reported as an error with "budget" in the
@@ -262,6 +292,7 @@ async function runTask(
     status: error ? 'error' : 'success',
     result,
     error,
+    run_id: runId,
   });
 
   const nextRun = computeNextRun(task);
