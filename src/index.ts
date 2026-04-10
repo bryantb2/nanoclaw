@@ -969,7 +969,7 @@ async function main(): Promise<void> {
         : opts;
       return channel.sendMessage(jid, text, threadOpts);
     },
-    injectMessage: (chatJid, text, senderName) => {
+    injectMessage: (chatJid, text, senderName, realTs) => {
       // IPC messages bypass the Slack channel adapter, so the
       // <@UBOTID> → @Fleet translation that normally happens in
       // slack.ts never runs. Without it, TRIGGER_PATTERN (/^@Fleet\b/i)
@@ -990,9 +990,17 @@ async function main(): Promise<void> {
       // so epoch format would be lexicographically less than ISO and
       // never picked up.
       const ts = new Date().toISOString();
+      // Option B: prefer the real Slack ts returned by sendMessage as the
+      // message id so selectThreadMessage picks it up as a valid thread_ts
+      // anchor. Fall back to a synthetic ipc- id if sendMessage returned
+      // undefined (channel disconnected, postMessage failed) — these get
+      // filtered by isValidThreadTs so the reply still posts to the main
+      // channel (Option A safety net behavior).
       const rand = Math.random().toString(36).slice(2, 8);
+      const id =
+        realTs && isValidThreadTs(realTs) ? realTs : `ipc-${ts}-${rand}`;
       storeMessage({
-        id: `ipc-${ts}-${rand}`,
+        id,
         chat_jid: chatJid,
         sender: 'ipc',
         sender_name: senderName,

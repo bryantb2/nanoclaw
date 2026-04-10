@@ -100,7 +100,9 @@ function formatTasksTable(
     }
     // Extract user message from XML context wrapper, strip mentions
     const rawMsg = row?.original_message ?? '';
-    const msgMatch = rawMsg.match(/<message\s+sender="[^"]*"[^>]*>([\s\S]*?)<\/message>/);
+    const msgMatch = rawMsg.match(
+      /<message\s+sender="[^"]*"[^>]*>([\s\S]*?)<\/message>/,
+    );
     const cleanMsg = (msgMatch ? msgMatch[1] : rawMsg)
       .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
       .replace(/<@[A-Z0-9]+>/g, '')
@@ -457,7 +459,10 @@ export class SlackChannel implements Channel {
           if (firstTs === undefined) firstTs = resp.ts;
         }
       }
-      logger.info({ jid, length: text.length, ts: firstTs }, 'Slack message sent');
+      logger.info(
+        { jid, length: text.length, ts: firstTs },
+        'Slack message sent',
+      );
       return firstTs;
     } catch (err) {
       this.outgoingQueue.push({ jid, text });
