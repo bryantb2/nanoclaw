@@ -62,7 +62,10 @@ vi.mock('./group-folder.js', () => ({
 vi.mock('./container-runtime.js', () => ({
   CONTAINER_RUNTIME_BIN: 'docker',
   hostGatewayArgs: vi.fn(() => []),
-  readonlyMountArgs: vi.fn((...args: unknown[]) => ['-v', `${args[0]}:${args[1]}:ro`]),
+  readonlyMountArgs: vi.fn((...args: unknown[]) => [
+    '-v',
+    `${args[0]}:${args[1]}:ro`,
+  ]),
   stopContainer: vi.fn(() => 'docker stop test'),
   ensureContainerRuntimeRunning: vi.fn(),
 }));
@@ -76,7 +79,10 @@ vi.mock('./remote-control.js', () => ({
 vi.mock('./sender-allowlist.js', () => ({
   isSenderAllowed: vi.fn(() => true),
   isTriggerAllowed: vi.fn(() => true),
-  loadSenderAllowlist: vi.fn(() => ({ default: { allow: '*', mode: 'trigger' }, chats: {} })),
+  loadSenderAllowlist: vi.fn(() => ({
+    default: { allow: '*', mode: 'trigger' },
+    chats: {},
+  })),
   shouldDropMessage: vi.fn(() => false),
 }));
 
@@ -135,7 +141,7 @@ function makeMessage(overrides: Partial<NewMessage> = {}): NewMessage {
 const TRIGGER_PATTERN = /^@Fleet\b/i;
 const alwaysAllowed = () => true;
 const neverAllowed = () => false;
-const noopLoader = () => ({} as any);
+const noopLoader = () => ({}) as any;
 
 // --- Tests ---
 
@@ -146,42 +152,78 @@ describe('selectThreadMessage — thread routing', () => {
       const msg2 = makeMessage({ id: 'new-msg', content: 'also no trigger' });
 
       const result = selectThreadMessage(
-        [msg1, msg2], true, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [msg1, msg2],
+        true,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('new-msg');
     });
 
     it('uses the latest message even when earlier messages have triggers', () => {
-      const trigger = makeMessage({ id: 'trigger-msg', content: '@Fleet do stuff' });
-      const noTrigger = makeMessage({ id: 'latest-msg', content: 'The dev-team agent finished PR #88' });
+      const trigger = makeMessage({
+        id: 'trigger-msg',
+        content: '@Fleet do stuff',
+      });
+      const noTrigger = makeMessage({
+        id: 'latest-msg',
+        content: 'The dev-team agent finished PR #88',
+      });
 
       const result = selectThreadMessage(
-        [trigger, noTrigger], true, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [trigger, noTrigger],
+        true,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('latest-msg');
     });
 
     it('returns the single message when only one is present', () => {
-      const msg = makeMessage({ id: 'only-msg', content: 'Hand this off to QA' });
+      const msg = makeMessage({
+        id: 'only-msg',
+        content: 'Hand this off to QA',
+      });
 
       const result = selectThreadMessage(
-        [msg], true, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [msg],
+        true,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('only-msg');
     });
 
     it('returns undefined for empty messages', () => {
       const result = selectThreadMessage(
-        [], true, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [],
+        true,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result).toBeUndefined();
     });
 
     it('does NOT call the allowlist loader (no trigger check needed)', () => {
-      const loader = vi.fn(() => ({} as any));
+      const loader = vi.fn(() => ({}) as any);
       const msg = makeMessage({ content: 'hello' });
 
-      selectThreadMessage([msg], true, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, loader);
+      selectThreadMessage(
+        [msg],
+        true,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        loader,
+      );
       expect(loader).not.toHaveBeenCalled();
     });
   });
@@ -189,10 +231,18 @@ describe('selectThreadMessage — thread routing', () => {
   describe('non-main groups (isMain: false)', () => {
     it('uses the latest trigger message', () => {
       const noTrigger = makeMessage({ id: 'context', content: 'some context' });
-      const trigger = makeMessage({ id: 'trigger', content: '@Fleet build KRE-199' });
+      const trigger = makeMessage({
+        id: 'trigger',
+        content: '@Fleet build KRE-199',
+      });
 
       const result = selectThreadMessage(
-        [noTrigger, trigger], false, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [noTrigger, trigger],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('trigger');
     });
@@ -203,7 +253,12 @@ describe('selectThreadMessage — thread routing', () => {
       const latest = makeMessage({ id: 'new-trigger', content: '@Fleet do Y' });
 
       const result = selectThreadMessage(
-        [old, mid, latest], false, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [old, mid, latest],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('new-trigger');
     });
@@ -213,19 +268,37 @@ describe('selectThreadMessage — thread routing', () => {
       const msg2 = makeMessage({ content: 'also no trigger' });
 
       const result = selectThreadMessage(
-        [msg1, msg2], false, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [msg1, msg2],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result).toBeUndefined();
     });
 
     it('skips trigger messages from non-allowlisted senders', () => {
-      const blocked = makeMessage({ id: 'blocked', content: '@Fleet hack the planet', sender: 'UBAD' });
-      const allowed = makeMessage({ id: 'allowed', content: '@Fleet deploy', sender: 'UGOOD' });
+      const blocked = makeMessage({
+        id: 'blocked',
+        content: '@Fleet hack the planet',
+        sender: 'UBAD',
+      });
+      const allowed = makeMessage({
+        id: 'allowed',
+        content: '@Fleet deploy',
+        sender: 'UGOOD',
+      });
 
       const checker = (_jid: string, sender: string) => sender === 'UGOOD';
 
       const result = selectThreadMessage(
-        [blocked, allowed], false, 'slack:C123', TRIGGER_PATTERN, checker as any, noopLoader,
+        [blocked, allowed],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        checker as any,
+        noopLoader,
       );
       expect(result?.id).toBe('allowed');
     });
@@ -238,14 +311,24 @@ describe('selectThreadMessage — thread routing', () => {
       });
 
       const result = selectThreadMessage(
-        [selfMsg], false, 'slack:C123', TRIGGER_PATTERN, neverAllowed, noopLoader,
+        [selfMsg],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        neverAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('self-trigger');
     });
 
     it('returns undefined for empty messages', () => {
       const result = selectThreadMessage(
-        [], false, 'slack:C123', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [],
+        false,
+        'slack:C123',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result).toBeUndefined();
     });
@@ -256,22 +339,39 @@ describe('selectThreadMessage — thread routing', () => {
       // Simulates the exact bug: user sends non-trigger message to main group
       const msg = makeMessage({
         id: '1775276573.357499',
-        content: 'The dev-team agent just finished up the initial implementation for this PR: https://github.com/Krewtrack/forcify/pull/88',
+        content:
+          'The dev-team agent just finished up the initial implementation for this PR: https://github.com/Krewtrack/forcify/pull/88',
       });
 
       const result = selectThreadMessage(
-        [msg], true, 'slack:C0APW8L9V6E', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [msg],
+        true,
+        'slack:C0APW8L9V6E',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       // Should use this message as thread, NOT fall through to stale
       expect(result?.id).toBe('1775276573.357499');
     });
 
     it('dev-team (non-main): @Fleet trigger gets threaded correctly', () => {
-      const context = makeMessage({ id: 'context-1', content: 'Here is some background' });
-      const trigger = makeMessage({ id: '1775267637.441379', content: '@Fleet work on KRE-199' });
+      const context = makeMessage({
+        id: 'context-1',
+        content: 'Here is some background',
+      });
+      const trigger = makeMessage({
+        id: '1775267637.441379',
+        content: '@Fleet work on KRE-199',
+      });
 
       const result = selectThreadMessage(
-        [context, trigger], false, 'slack:C0ANT2AL2AY', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [context, trigger],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result?.id).toBe('1775267637.441379');
     });
@@ -283,7 +383,12 @@ describe('selectThreadMessage — thread routing', () => {
       });
 
       const result = selectThreadMessage(
-        [noTrigger], false, 'slack:C0ANT2AL2AY', TRIGGER_PATTERN, alwaysAllowed, noopLoader,
+        [noTrigger],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
       );
       expect(result).toBeUndefined();
     });
@@ -392,6 +497,81 @@ describe('selectThreadMessage — thread routing', () => {
         noopLoader,
       );
       expect(result).toBeUndefined();
+    });
+  });
+
+  // --- Option B: real-ts IPC injection rows MUST be picked as thread anchor ---
+  // This pins the actual win of Option B. Pre-Option-B (and pre-fix), the IPC
+  // injection used a synthetic `ipc-` id and was filtered out. With Option B,
+  // injectMessage stores the real Slack ts as messages.id, and that row must
+  // be picked by selectThreadMessage so the target group's reply threads under
+  // the routing message instead of posting to the main channel.
+  describe('Option B: real-ts IPC injection as thread anchor', () => {
+    it('non-main: picks an IPC row whose id is a real Slack ts', () => {
+      const ipcRealTs = makeMessage({
+        id: '1775796300.543699',
+        sender: 'ipc',
+        sender_name: 'ipc:slack_dispatch',
+        is_from_me: true,
+        content: '@Fleet [DISPATCH-ROUTED] Fix PR #101',
+      });
+      const result = selectThreadMessage(
+        [ipcRealTs],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result?.id).toBe('1775796300.543699');
+    });
+
+    it('main: picks an IPC row whose id is a real Slack ts as the latest anchor', () => {
+      const ipcRealTs = makeMessage({
+        id: '1775796300.543699',
+        sender: 'ipc',
+        sender_name: 'ipc:slack_dispatch',
+        is_from_me: true,
+        content: '@Fleet [DISPATCH-ROUTED] Fix PR #101',
+      });
+      const result = selectThreadMessage(
+        [ipcRealTs],
+        true,
+        'slack:C0APW8L9V6E',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result?.id).toBe('1775796300.543699');
+    });
+
+    it('non-main: prefers a real-ts IPC row over an earlier synthetic row', () => {
+      // Mixed history: an old synthetic row (pre-Option-B) and a new
+      // Option-B row with a real ts. selectThreadMessage walks backward and
+      // should land on the real-ts row.
+      const oldSynthetic = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.620Z-gii5uo',
+        sender: 'ipc',
+        sender_name: 'ipc:slack_dispatch',
+        is_from_me: true,
+        content: '@Fleet [DISPATCH-ROUTED] earlier task',
+      });
+      const newReal = makeMessage({
+        id: '1775796400.000001',
+        sender: 'ipc',
+        sender_name: 'ipc:slack_dispatch',
+        is_from_me: true,
+        content: '@Fleet [DISPATCH-ROUTED] later task',
+      });
+      const result = selectThreadMessage(
+        [oldSynthetic, newReal],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result?.id).toBe('1775796400.000001');
     });
   });
 });
