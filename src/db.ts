@@ -161,24 +161,19 @@ function createSchema(database: Database.Database): void {
   }
 
   // Add token tracking columns to cost_log (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE cost_log ADD COLUMN input_tokens INTEGER DEFAULT 0`,
-    );
-    database.exec(
-      `ALTER TABLE cost_log ADD COLUMN output_tokens INTEGER DEFAULT 0`,
-    );
-    database.exec(
-      `ALTER TABLE cost_log ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`,
-    );
-    database.exec(
-      `ALTER TABLE cost_log ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`,
-    );
-    database.exec(
-      `ALTER TABLE cost_log ADD COLUMN cost_source TEXT DEFAULT 'sdk'`,
-    );
-  } catch {
-    /* columns already exist */
+  // Each ALTER in its own try/catch so partial migrations don't skip remaining columns
+  for (const col of [
+    `input_tokens INTEGER DEFAULT 0`,
+    `output_tokens INTEGER DEFAULT 0`,
+    `cache_creation_tokens INTEGER DEFAULT 0`,
+    `cache_read_tokens INTEGER DEFAULT 0`,
+    `cost_source TEXT DEFAULT 'sdk'`,
+  ]) {
+    try {
+      database.exec(`ALTER TABLE cost_log ADD COLUMN ${col}`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   // Add run_id to cost_log and task_run_logs for work association

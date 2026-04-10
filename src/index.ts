@@ -27,12 +27,12 @@ import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
+import { logCostFromOutput, writeCostSummaryFile } from './cost-logging.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
-  appendCostLog,
   getCostSummary,
   getAndClearInFlightTasks,
   getMessagesSince,
@@ -486,66 +486,13 @@ async function runAgent(
       // Still log cost on error — a killed/failed container still consumed API tokens
     }
 
-    // Track cost if reported (runs for both success and error)
-    // Prefer computedCostUsd (from token counts) over SDK totalCostUsd
-    const effectiveCost =
-      (output.computedCostUsd ?? 0) > 0
-        ? output.computedCostUsd!
-        : (output.totalCostUsd ?? 0);
-    // Determine cost source: 'computed' if we have token-derived cost,
-    // 'ipc' only if cost came from IPC recovery (no computed and no SDK cost but tokens present),
-    // 'sdk' if falling back to SDK total_cost_usd
-    const costSource =
-      (output.computedCostUsd ?? 0) > 0
-        ? ('computed' as const)
-        : (output.totalCostUsd ?? 0) > 0
-          ? ('sdk' as const)
-          : output.tokenUsage
-            ? ('ipc' as const)
-            : ('sdk' as const);
-    logger.debug(
-      {
-        group: group.name,
-        sdkCost: output.totalCostUsd ?? null,
-        computedCost: output.computedCostUsd ?? null,
-        effectiveCost,
-        costSource,
-      },
-      'Agent run cost data',
+    const costResult = logCostFromOutput(
+      { groupFolder: group.folder, chatJid, runId },
+      output,
     );
-    if (effectiveCost > 0) {
-      try {
-        appendCostLog(group.folder, chatJid, effectiveCost, {
-          runId,
-          inputTokens: output.tokenUsage?.inputTokens,
-          outputTokens: output.tokenUsage?.outputTokens,
-          cacheCreationTokens: output.tokenUsage?.cacheCreationInputTokens,
-          cacheReadTokens: output.tokenUsage?.cacheReadInputTokens,
-          costSource,
-        });
-        const summary = getCostSummary(group.folder);
-        const groupDir = resolveGroupFolderPath(group.folder);
-        const costSummaryPath = path.join(groupDir, 'cost-summary.json');
-        fs.writeFileSync(
-          costSummaryPath,
-          JSON.stringify(
-            {
-              today_usd: summary.todayUsd,
-              week_usd: summary.weekUsd,
-              all_time_usd: summary.allTimeUsd,
-              last_updated: new Date().toISOString(),
-            },
-            null,
-            2,
-          ),
-        );
-        logger.debug(
-          { group: group.name, costUsd: effectiveCost, costSource },
-          'Cost logged and summary written',
-        );
-      } catch (err) {
-        logger.warn({ group: group.name, err }, 'Failed to write cost summary');
-      }
+    if (costResult) {
+      const groupDir = resolveGroupFolderPath(group.folder);
+      writeCostSummaryFile(group.folder, groupDir, fs, path);
     }
 
     return output.status === 'error' ? 'error' : 'success';

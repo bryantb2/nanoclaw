@@ -649,6 +649,8 @@ export async function runContainerAgent(
             currentQueryMaxCost = 0;
             accumulatedComputedCost += currentQueryMaxComputedCost;
             currentQueryMaxComputedCost = 0;
+            // Clean up stale IPC cost file from this run
+            readIpcCostFile(group.folder);
             const cost = bestCost(
               accumulatedCostUsd,
               accumulatedComputedCost,
@@ -808,11 +810,7 @@ export async function runContainerAgent(
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
           totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
-          computedCostUsd:
-            (accumulatedComputedCost > 0
-              ? accumulatedComputedCost
-              : undefined) ??
-            (ipcCostOnError?.costUsd ? ipcCostOnError.costUsd : undefined),
+          computedCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
           tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
         return;
@@ -835,6 +833,8 @@ export async function runContainerAgent(
           currentQueryMaxCost = 0;
           accumulatedComputedCost += currentQueryMaxComputedCost;
           currentQueryMaxComputedCost = 0;
+          // Clean up stale IPC cost file from this run
+          readIpcCostFile(group.folder);
           const successCost = bestCost(
             accumulatedCostUsd,
             accumulatedComputedCost,

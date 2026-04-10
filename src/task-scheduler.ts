@@ -13,8 +13,8 @@ import {
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { logCostFromOutput } from './cost-logging.js';
 import {
-  appendCostLog,
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -220,34 +220,10 @@ async function runTask(
       result = output.result;
     }
 
-    // Log cost for scheduled tasks (same logic as runAgent in index.ts)
-    const effectiveCost =
-      (output.computedCostUsd ?? 0) > 0
-        ? output.computedCostUsd!
-        : (output.totalCostUsd ?? 0);
-    if (effectiveCost > 0) {
-      const costSource =
-        (output.computedCostUsd ?? 0) > 0
-          ? ('computed' as const)
-          : (output.totalCostUsd ?? 0) > 0
-            ? ('sdk' as const)
-            : ('ipc' as const);
-      try {
-        appendCostLog(task.group_folder, task.chat_jid, effectiveCost, {
-          runId,
-          inputTokens: output.tokenUsage?.inputTokens,
-          outputTokens: output.tokenUsage?.outputTokens,
-          cacheCreationTokens: output.tokenUsage?.cacheCreationInputTokens,
-          cacheReadTokens: output.tokenUsage?.cacheReadInputTokens,
-          costSource,
-        });
-      } catch (err) {
-        logger.warn(
-          { taskId: task.id, err },
-          'Failed to log task cost',
-        );
-      }
-    }
+    logCostFromOutput(
+      { groupFolder: task.group_folder, chatJid: task.chat_jid, runId },
+      output,
+    );
 
     // FOUND-07: Budget exhaustion is reported as an error with "budget" in the
     // message. Send a clear Slack notification so operators know the task was
