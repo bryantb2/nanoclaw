@@ -642,14 +642,20 @@ export async function runContainerAgent(
             currentQueryMaxCost = 0;
             accumulatedComputedCost += currentQueryMaxComputedCost;
             currentQueryMaxComputedCost = 0;
-            const cost = bestCost(accumulatedCostUsd, accumulatedComputedCost, null);
+            const cost = bestCost(
+              accumulatedCostUsd,
+              accumulatedComputedCost,
+              null,
+            );
             resolve({
               status: 'success',
               result: null,
               newSessionId,
               totalCostUsd: cost.costUsd > 0 ? cost.costUsd : undefined,
               computedCostUsd:
-                accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined,
+                accumulatedComputedCost > 0
+                  ? accumulatedComputedCost
+                  : undefined,
               tokenUsage: lastTokenUsage,
             });
           });
@@ -676,7 +682,8 @@ export async function runContainerAgent(
           result: null,
           error: `Container timed out after ${configTimeout}ms`,
           totalCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
-          computedCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
+          computedCostUsd:
+            recovered.costUsd > 0 ? recovered.costUsd : undefined,
           tokenUsage: recovered.tokenUsage,
         });
         return;
@@ -718,7 +725,12 @@ export async function runContainerAgent(
         // Scrub credentials from container args before logging
         const scrubbed = containerArgs.map((arg, i) => {
           const prev = containerArgs[i - 1];
-          if (prev === '-e' && /^(ANTHROPIC_API_KEY|LINEAR_API_KEY|GOOGLE_SERVICE_ACCOUNT_JSON|GITHUB_APP_PRIVATE_KEY)=/.test(arg)) {
+          if (
+            prev === '-e' &&
+            /^(ANTHROPIC_API_KEY|LINEAR_API_KEY|GOOGLE_SERVICE_ACCOUNT_JSON|GITHUB_APP_PRIVATE_KEY)=/.test(
+              arg,
+            )
+          ) {
             return arg.replace(/=.*/, '=[REDACTED]');
           }
           return arg;
@@ -777,17 +789,24 @@ export async function runContainerAgent(
         accumulatedComputedCost += currentQueryMaxComputedCost;
         currentQueryMaxComputedCost = 0;
         // Try IPC recovery if no cost was accumulated from output markers
-        const ipcCostOnError = (accumulatedCostUsd === 0 && accumulatedComputedCost === 0)
-          ? readIpcCostFile(group.folder)
-          : null;
-        const errorCost = bestCost(accumulatedCostUsd, accumulatedComputedCost, ipcCostOnError);
+        const ipcCostOnError =
+          accumulatedCostUsd === 0 && accumulatedComputedCost === 0
+            ? readIpcCostFile(group.folder)
+            : null;
+        const errorCost = bestCost(
+          accumulatedCostUsd,
+          accumulatedComputedCost,
+          ipcCostOnError,
+        );
         resolve({
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
           totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
           computedCostUsd:
-            (accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined) ??
+            (accumulatedComputedCost > 0
+              ? accumulatedComputedCost
+              : undefined) ??
             (ipcCostOnError?.costUsd ? ipcCostOnError.costUsd : undefined),
           tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
@@ -811,12 +830,17 @@ export async function runContainerAgent(
           currentQueryMaxCost = 0;
           accumulatedComputedCost += currentQueryMaxComputedCost;
           currentQueryMaxComputedCost = 0;
-          const successCost = bestCost(accumulatedCostUsd, accumulatedComputedCost, null);
+          const successCost = bestCost(
+            accumulatedCostUsd,
+            accumulatedComputedCost,
+            null,
+          );
           resolve({
             status: 'success',
             result: null,
             newSessionId,
-            totalCostUsd: successCost.costUsd > 0 ? successCost.costUsd : undefined,
+            totalCostUsd:
+              successCost.costUsd > 0 ? successCost.costUsd : undefined,
             computedCostUsd:
               accumulatedComputedCost > 0 ? accumulatedComputedCost : undefined,
             tokenUsage: lastTokenUsage,
@@ -879,7 +903,8 @@ export async function runContainerAgent(
           result: null,
           error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
           totalCostUsd: parseCost.costUsd > 0 ? parseCost.costUsd : undefined,
-          computedCostUsd: parseCost.costUsd > 0 ? parseCost.costUsd : undefined,
+          computedCostUsd:
+            parseCost.costUsd > 0 ? parseCost.costUsd : undefined,
           tokenUsage: parseCost.tokenUsage,
         });
       }
@@ -891,10 +916,16 @@ export async function runContainerAgent(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
+      // Recover cost from IPC if agent-runner managed to start before the spawn error
+      const ipcCostSpawn = readIpcCostFile(group.folder);
+      const spawnCost = bestCost(0, 0, ipcCostSpawn);
       resolve({
         status: 'error',
         result: null,
         error: `Container spawn error: ${err.message}`,
+        totalCostUsd: spawnCost.costUsd > 0 ? spawnCost.costUsd : undefined,
+        computedCostUsd: spawnCost.costUsd > 0 ? spawnCost.costUsd : undefined,
+        tokenUsage: spawnCost.tokenUsage,
       });
     });
   });

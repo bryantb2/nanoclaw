@@ -51,22 +51,54 @@ interface TokenUsage {
 }
 
 /** Anthropic pricing per million tokens (April 2026). */
+const OPUS_PRICING = { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 };
+const SONNET_PRICING = { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.30 };
+const HAIKU_PRICING = { input: 0.80, output: 4, cacheWrite: 1.00, cacheRead: 0.08 };
+
 const MODEL_PRICING: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
-  // Claude 4 family
-  'claude-opus-4-20250514':          { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
-  'claude-opus-4-0':                 { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
-  'claude-sonnet-4-20250514':        { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
-  'claude-sonnet-4-0':               { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
+  // Claude 4.6 / 4 Opus family (including 1M context variants)
+  'claude-opus-4-6-20250514':        OPUS_PRICING,
+  'claude-opus-4-6':                 OPUS_PRICING,
+  'claude-opus-4-20250514':          OPUS_PRICING,
+  'claude-opus-4-0':                 OPUS_PRICING,
+  // Claude 4.6 / 4 Sonnet family
+  'claude-sonnet-4-6-20250514':      SONNET_PRICING,
+  'claude-sonnet-4-6':               SONNET_PRICING,
+  'claude-sonnet-4-20250514':        SONNET_PRICING,
+  'claude-sonnet-4-0':               SONNET_PRICING,
   // Claude 3.5 family
-  'claude-3-5-sonnet-20241022':      { input: 3,    output: 15,   cacheWrite: 3.75,  cacheRead: 0.30 },
-  'claude-3-5-haiku-20241022':       { input: 0.80, output: 4,    cacheWrite: 1.00,  cacheRead: 0.08 },
+  'claude-3-5-sonnet-20241022':      SONNET_PRICING,
+  'claude-3-5-haiku-20241022':       HAIKU_PRICING,
 };
 
-/** Fallback pricing if model is unknown — uses Sonnet 4 rates (most common fleet model). */
-const DEFAULT_PRICING = { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.30 };
+/**
+ * Fallback pricing if model is unknown — uses Sonnet rates as a conservative middle ground.
+ * Over-reporting (Opus default) risks false alerts; under-reporting (Haiku) defeats the purpose.
+ */
+const DEFAULT_PRICING = SONNET_PRICING;
+const warnedModels = new Set<string>();
 
 function computeCostFromTokens(usage: TokenUsage, model?: string): number {
-  const pricing = (model && MODEL_PRICING[model]) || DEFAULT_PRICING;
+  let pricing = DEFAULT_PRICING;
+  if (model) {
+    const exact = MODEL_PRICING[model];
+    if (exact) {
+      pricing = exact;
+    } else {
+      // Try prefix matching for unknown variants (e.g. claude-opus-4-6-20260101)
+      const prefix = model.includes('opus') ? OPUS_PRICING
+        : model.includes('haiku') ? HAIKU_PRICING
+        : model.includes('sonnet') ? SONNET_PRICING
+        : null;
+      if (prefix) {
+        pricing = prefix;
+      }
+      if (!warnedModels.has(model)) {
+        warnedModels.add(model);
+        log(`Unknown model "${model}" — using ${prefix ? 'inferred' : 'default Sonnet'} pricing`);
+      }
+    }
+  }
   const cost =
     (usage.inputTokens * pricing.input / 1_000_000) +
     (usage.outputTokens * pricing.output / 1_000_000) +
@@ -172,7 +204,10 @@ function writeCostToIpc(costUsd: number, usage: TokenUsage): void {
       cacheReadInputTokens: usage.cacheReadInputTokens,
       updatedAt: new Date().toISOString(),
     });
-    fs.writeFileSync(IPC_COST_FILE, data);
+    // Atomic write: tmp + rename prevents partial reads on container kill
+    const tmpFile = IPC_COST_FILE + '.tmp';
+    fs.writeFileSync(tmpFile, data);
+    fs.renameSync(tmpFile, IPC_COST_FILE);
   } catch {
     // Best-effort — IPC dir may not exist in tests
   }

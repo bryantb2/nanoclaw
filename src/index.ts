@@ -487,12 +487,21 @@ async function runAgent(
 
     // Track cost if reported (runs for both success and error)
     // Prefer computedCostUsd (from token counts) over SDK totalCostUsd
-    const effectiveCost = (output.computedCostUsd ?? 0) > 0
-      ? output.computedCostUsd!
-      : (output.totalCostUsd ?? 0);
-    const costSource = (output.computedCostUsd ?? 0) > 0
-      ? 'computed' as const
-      : (output.tokenUsage ? 'ipc' as const : 'sdk' as const);
+    const effectiveCost =
+      (output.computedCostUsd ?? 0) > 0
+        ? output.computedCostUsd!
+        : (output.totalCostUsd ?? 0);
+    // Determine cost source: 'computed' if we have token-derived cost,
+    // 'ipc' only if cost came from IPC recovery (no computed and no SDK cost but tokens present),
+    // 'sdk' if falling back to SDK total_cost_usd
+    const costSource =
+      (output.computedCostUsd ?? 0) > 0
+        ? ('computed' as const)
+        : (output.totalCostUsd ?? 0) > 0
+          ? ('sdk' as const)
+          : output.tokenUsage
+            ? ('ipc' as const)
+            : ('sdk' as const);
     logger.debug(
       {
         group: group.name,
