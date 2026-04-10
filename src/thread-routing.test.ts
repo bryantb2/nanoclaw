@@ -288,4 +288,132 @@ describe('selectThreadMessage — thread routing', () => {
       expect(result).toBeUndefined();
     });
   });
+
+  describe('synthetic ipc- ID filtering', () => {
+    it('non-main: skips ipc- IDs even when they match the trigger', () => {
+      // This is the dispatch-routing case: an IPC-injected message has a
+      // synthetic id like `ipc-2026-04-10T04:45:00.620Z-gii5uo` which is
+      // NOT a valid Slack thread_ts and will be rejected by chat.postMessage.
+      const ipcRouted = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.620Z-gii5uo',
+        content: '@Fleet [DISPATCH-ROUTED] Fix PR #101 CI failure',
+      });
+
+      const result = selectThreadMessage(
+        [ipcRouted],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('non-main: falls through to earlier real Slack message when latest is ipc-', () => {
+      const realTrigger = makeMessage({
+        id: '1775796264.585709',
+        content: '@Fleet check on this PR',
+      });
+      const ipcRouted = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.620Z-gii5uo',
+        content: '@Fleet [DISPATCH-ROUTED] Fix PR #101',
+      });
+
+      const result = selectThreadMessage(
+        [realTrigger, ipcRouted],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result?.id).toBe('1775796264.585709');
+    });
+
+    it('main: skips ipc- IDs and uses latest real message', () => {
+      const oldReal = makeMessage({
+        id: '1775796200.000000',
+        content: 'older real message',
+      });
+      const ipcRouted = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.620Z-gii5uo',
+        content: 'injected via IPC',
+      });
+
+      const result = selectThreadMessage(
+        [oldReal, ipcRouted],
+        true,
+        'slack:C0APW8L9V6E',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result?.id).toBe('1775796200.000000');
+    });
+
+    it('main: returns undefined when all messages have synthetic ipc- IDs', () => {
+      const ipc1 = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.000Z-aaa',
+        content: 'first ipc',
+      });
+      const ipc2 = makeMessage({
+        id: 'ipc-2026-04-10T04:46:00.000Z-bbb',
+        content: 'second ipc',
+      });
+
+      const result = selectThreadMessage(
+        [ipc1, ipc2],
+        true,
+        'slack:C0APW8L9V6E',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('non-main: returns undefined when only ipc- trigger messages exist', () => {
+      const ipcTrigger1 = makeMessage({
+        id: 'ipc-2026-04-10T04:45:00.000Z-aaa',
+        content: '@Fleet [ROUTED] task 1',
+      });
+      const ipcTrigger2 = makeMessage({
+        id: 'ipc-2026-04-10T04:46:00.000Z-bbb',
+        content: '@Fleet [ROUTED] task 2',
+      });
+
+      const result = selectThreadMessage(
+        [ipcTrigger1, ipcTrigger2],
+        false,
+        'slack:C0ANT2AL2AY',
+        TRIGGER_PATTERN,
+        alwaysAllowed,
+        noopLoader,
+      );
+      expect(result).toBeUndefined();
+    });
+  });
+});
+
+describe('isValidThreadTs', () => {
+  it('rejects synthetic ipc- IDs', async () => {
+    const { isValidThreadTs } = await import('./index.js');
+    expect(isValidThreadTs('ipc-2026-04-10T04:45:00.620Z-gii5uo')).toBe(false);
+  });
+
+  it('accepts real Slack timestamps', async () => {
+    const { isValidThreadTs } = await import('./index.js');
+    expect(isValidThreadTs('1775796264.585709')).toBe(true);
+  });
+
+  it('rejects undefined', async () => {
+    const { isValidThreadTs } = await import('./index.js');
+    expect(isValidThreadTs(undefined)).toBe(false);
+  });
+
+  it('rejects empty string', async () => {
+    const { isValidThreadTs } = await import('./index.js');
+    expect(isValidThreadTs('')).toBe(false);
+  });
 });
