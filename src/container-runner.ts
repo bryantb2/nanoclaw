@@ -49,14 +49,21 @@ function readIpcCostFile(groupFolder: string): IpcCostData | null {
   try {
     const ipcDir = resolveGroupIpcPath(groupFolder);
     const costFile = path.join(ipcDir, 'cost.json');
-    if (!fs.existsSync(costFile)) return null;
     const data = JSON.parse(fs.readFileSync(costFile, 'utf-8'));
-    // Clean up after reading
     fs.unlinkSync(costFile);
     return data as IpcCostData;
   } catch {
     return null;
   }
+}
+
+/** Recover cost from IPC file when no cost was accumulated from output markers. */
+function recoverIpcCost(groupFolder: string): {
+  costUsd: number;
+  tokenUsage?: TokenUsage;
+} {
+  const ipcCost = readIpcCostFile(groupFolder);
+  return bestCost(0, 0, ipcCost);
 }
 
 /** Pick the best available cost: prefer computed (from tokens), fall back to SDK, then IPC recovery. */
@@ -667,9 +674,7 @@ export async function runContainerAgent(
           'Container timed out with no output',
         );
 
-        // Recover cost from IPC file — container may have consumed tokens before timeout
-        const ipcCost = readIpcCostFile(group.folder);
-        const recovered = bestCost(0, 0, ipcCost);
+        const recovered = recoverIpcCost(group.folder);
         if (recovered.costUsd > 0) {
           logger.info(
             { group: group.name, recoveredCost: recovered.costUsd },
@@ -895,9 +900,7 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
-        // Recover cost from IPC even on parse failure
-        const ipcCostParse = readIpcCostFile(group.folder);
-        const parseCost = bestCost(0, 0, ipcCostParse);
+        const parseCost = recoverIpcCost(group.folder);
         resolve({
           status: 'error',
           result: null,
@@ -916,9 +919,7 @@ export async function runContainerAgent(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
-      // Recover cost from IPC if agent-runner managed to start before the spawn error
-      const ipcCostSpawn = readIpcCostFile(group.folder);
-      const spawnCost = bestCost(0, 0, ipcCostSpawn);
+      const spawnCost = recoverIpcCost(group.folder);
       resolve({
         status: 'error',
         result: null,

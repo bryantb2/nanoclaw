@@ -572,20 +572,17 @@ async function runQuery(
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
       const sdkCost = 'total_cost_usd' in message ? (message as { total_cost_usd?: number }).total_cost_usd ?? 0 : 0;
 
-      // Extract token usage from the result message's usage field
       const resultUsage = (message as { usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }).usage;
       if (resultUsage) {
-        // SDK result usage is cumulative within a query — take the latest (largest) values
+        // Cumulative within a query — take the latest (largest) values
         accumulatedUsage.inputTokens = Math.max(accumulatedUsage.inputTokens, resultUsage.input_tokens ?? 0);
         accumulatedUsage.outputTokens = Math.max(accumulatedUsage.outputTokens, resultUsage.output_tokens ?? 0);
         accumulatedUsage.cacheCreationInputTokens = Math.max(accumulatedUsage.cacheCreationInputTokens, resultUsage.cache_creation_input_tokens ?? 0);
         accumulatedUsage.cacheReadInputTokens = Math.max(accumulatedUsage.cacheReadInputTokens, resultUsage.cache_read_input_tokens ?? 0);
       }
 
-      // Extract per-model usage breakdown (modelUsage field)
       const modelUsage = (message as { modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number }> }).modelUsage;
       if (modelUsage) {
-        // Use modelUsage for more accurate per-model cost calculation
         let modelComputedCost = 0;
         for (const [model, usage] of Object.entries(modelUsage)) {
           if (!detectedModel) detectedModel = model;
@@ -608,13 +605,11 @@ async function runQuery(
             computedCostUsd: computedCost,
             tokenUsage: accumulatedUsage,
           });
-          // Write cost to IPC for recovery on container kill
           writeCostToIpc(computedCost, accumulatedUsage);
           continue;
         }
       }
 
-      // Fallback: compute from aggregate usage if modelUsage wasn't available
       const computedCost = computeCostFromTokens(accumulatedUsage, detectedModel);
       log(`Result #${resultCount}: sdkCost=$${sdkCost.toFixed(4)}, computedCost=$${computedCost.toFixed(4)} (fallback), model=${detectedModel || 'unknown'}`);
       writeOutput({
@@ -625,7 +620,6 @@ async function runQuery(
         computedCostUsd: computedCost > 0 ? computedCost : undefined,
         tokenUsage: resultUsage ? accumulatedUsage : undefined,
       });
-      // Write cost to IPC for recovery on container kill
       if (computedCost > 0 || sdkCost > 0) {
         writeCostToIpc(computedCost > 0 ? computedCost : sdkCost, accumulatedUsage);
       }
