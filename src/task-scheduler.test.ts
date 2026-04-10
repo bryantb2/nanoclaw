@@ -197,8 +197,8 @@ describe('budget exhaustion notification', () => {
     await vi.advanceTimersByTimeAsync(100);
 
     // sendMessage must have been called with budget exhaustion notice
-    const budgetCall = sendMessage.mock.calls.find(
-      (call) => /budget/i.test(String(call[1])),
+    const budgetCall = sendMessage.mock.calls.find((call) =>
+      /budget/i.test(String(call[1])),
     );
     expect(budgetCall).toBeDefined();
     expect(budgetCall![0]).toBe('test-channel@slack');
@@ -251,8 +251,8 @@ describe('budget exhaustion notification', () => {
     await vi.advanceTimersByTimeAsync(100);
 
     // No budget-specific message should be sent
-    const budgetCall = sendMessage.mock.calls.find(
-      (call) => /budget/i.test(String(call[1])),
+    const budgetCall = sendMessage.mock.calls.find((call) =>
+      /budget/i.test(String(call[1])),
     );
     expect(budgetCall).toBeUndefined();
   });
@@ -302,8 +302,8 @@ describe('budget exhaustion notification', () => {
 
     await vi.advanceTimersByTimeAsync(100);
 
-    const budgetCall = sendMessage.mock.calls.find(
-      (call) => /budget/i.test(String(call[1])),
+    const budgetCall = sendMessage.mock.calls.find((call) =>
+      /budget/i.test(String(call[1])),
     );
     expect(budgetCall).toBeDefined();
     expect(budgetCall![1]).toContain('task-cap-check');

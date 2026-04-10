@@ -57,10 +57,7 @@ describe('logCostFromOutput', () => {
   });
 
   it('persists run_id to cost_log', () => {
-    logCostFromOutput(
-      ctx,
-      makeOutput({ computedCostUsd: 0.15 }),
-    );
+    logCostFromOutput(ctx, makeOutput({ computedCostUsd: 0.15 }));
 
     const db = _getDb();
     const row = db
@@ -100,10 +97,7 @@ describe('logCostFromOutput', () => {
   });
 
   it('handles missing tokenUsage gracefully', () => {
-    logCostFromOutput(
-      ctx,
-      makeOutput({ totalCostUsd: 0.10 }),
-    );
+    logCostFromOutput(ctx, makeOutput({ totalCostUsd: 0.1 }));
 
     const db = _getDb();
     const row = db

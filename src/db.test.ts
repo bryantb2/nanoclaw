@@ -702,7 +702,7 @@ describe('appendCostLog with details', () => {
   });
 
   it('defaults token columns to 0 and source to sdk when details omitted', () => {
-    appendCostLog('main', 'slack:C456', 0.10);
+    appendCostLog('main', 'slack:C456', 0.1);
 
     const db = _getDb();
     const row = db
@@ -825,7 +825,7 @@ describe('run_id linking', () => {
   it('human-triggered runs have cost_log but no task_run_logs match', () => {
     const runId = '8888888888-hm01';
 
-    appendCostLog('dev-team', 'slack:C789', 1.20, {
+    appendCostLog('dev-team', 'slack:C789', 1.2, {
       runId,
       costSource: 'sdk',
     });
@@ -841,16 +841,16 @@ describe('run_id linking', () => {
       .get(runId) as { run_id: string; cost_usd: number } | undefined;
 
     expect(orphan).toBeDefined();
-    expect(orphan!.cost_usd).toBeCloseTo(1.20);
+    expect(orphan!.cost_usd).toBeCloseTo(1.2);
   });
 });
 
 describe('cost_log schema migration', () => {
   it('creates all token tracking columns on fresh DB', () => {
     const db = _getDb();
-    const cols = db
-      .prepare('PRAGMA table_info(cost_log)')
-      .all() as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(cost_log)').all() as Array<{
+      name: string;
+    }>;
     const colNames = cols.map((c) => c.name);
 
     expect(colNames).toContain('input_tokens');
@@ -863,9 +863,9 @@ describe('cost_log schema migration', () => {
 
   it('creates run_id column on task_run_logs', () => {
     const db = _getDb();
-    const cols = db
-      .prepare('PRAGMA table_info(task_run_logs)')
-      .all() as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(task_run_logs)').all() as Array<{
+      name: string;
+    }>;
     const colNames = cols.map((c) => c.name);
 
     expect(colNames).toContain('run_id');
@@ -885,7 +885,9 @@ describe('cost_log schema migration', () => {
 
     const db = _getDb();
     const row = db
-      .prepare('SELECT run_id, cost_source FROM cost_log WHERE group_folder = ?')
+      .prepare(
+        'SELECT run_id, cost_source FROM cost_log WHERE group_folder = ?',
+      )
       .get('main') as { run_id: string; cost_source: string };
 
     expect(row.run_id).toBe('test-run');
