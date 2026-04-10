@@ -222,10 +222,16 @@ export async function processMessageIpc(
     );
     return 'unauthorized';
   }
+  // Filter synthetic ipc- thread_ts values (see isValidThreadTs in index.ts).
+  // Slack rejects these with "invalid_thread_ts".
+  const validThreadTs =
+    data.threadTs && !data.threadTs.startsWith('ipc-')
+      ? data.threadTs
+      : undefined;
   await deps.sendMessage(
     data.chatJid,
     data.text,
-    data.threadTs ? { threadTs: data.threadTs } : undefined,
+    validThreadTs ? { threadTs: validThreadTs } : undefined,
   );
   if (deps.injectMessage) {
     deps.injectMessage(data.chatJid, data.text, `ipc:${sourceGroup}`);
