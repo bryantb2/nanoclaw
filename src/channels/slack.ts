@@ -441,22 +441,33 @@ export class SlackChannel implements Channel {
       // When splitting, return the FIRST chunk's ts — subsequent replies
       // thread under the first message (which is where users land when
       // clicking the thread in their client).
+      //
+      // The Slack SDK normally throws on errors, but some failure modes
+      // (e.g. `not_in_channel`, `channel_not_found`, `is_archived`) can
+      // resolve with `{ ok: false, error: '...' }` instead. Treat those
+      // as failures so we don't (a) return `undefined` masquerading as
+      // success and (b) silently anchor IPC threading on a later chunk's
+      // ts when the first chunk soft-failed.
       let firstTs: string | undefined;
-      if (text.length <= MAX_MESSAGE_LENGTH) {
+      const post = async (chunk: string): Promise<string | undefined> => {
         const resp = await this.app.client.chat.postMessage({
           channel: channelId,
-          text: markdownToSlackMrkdwn(text),
+          text: markdownToSlackMrkdwn(chunk),
           ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
         });
-        firstTs = resp.ts;
+        if (!resp.ok || !resp.ts) {
+          throw new Error(
+            `Slack chat.postMessage soft-failed: ${resp.error ?? 'unknown'}`,
+          );
+        }
+        return resp.ts;
+      };
+      if (text.length <= MAX_MESSAGE_LENGTH) {
+        firstTs = await post(text);
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          const resp = await this.app.client.chat.postMessage({
-            channel: channelId,
-            text: markdownToSlackMrkdwn(text.slice(i, i + MAX_MESSAGE_LENGTH)),
-            ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
-          });
-          if (firstTs === undefined) firstTs = resp.ts;
+          const ts = await post(text.slice(i, i + MAX_MESSAGE_LENGTH));
+          if (firstTs === undefined) firstTs = ts;
         }
       }
       logger.info(
