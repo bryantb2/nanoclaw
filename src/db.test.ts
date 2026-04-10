@@ -16,6 +16,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  isIpcInjectedMessage,
   logTaskRun,
   setRegisteredGroup,
   storeChatMetadata,
@@ -701,7 +702,7 @@ describe('appendCostLog with details', () => {
   });
 
   it('defaults token columns to 0 and source to sdk when details omitted', () => {
-    appendCostLog('main', 'slack:C456', 0.10);
+    appendCostLog('main', 'slack:C456', 0.1);
 
     const db = _getDb();
     const row = db
@@ -824,7 +825,7 @@ describe('run_id linking', () => {
   it('human-triggered runs have cost_log but no task_run_logs match', () => {
     const runId = '8888888888-hm01';
 
-    appendCostLog('dev-team', 'slack:C789', 1.20, {
+    appendCostLog('dev-team', 'slack:C789', 1.2, {
       runId,
       costSource: 'sdk',
     });
@@ -840,16 +841,16 @@ describe('run_id linking', () => {
       .get(runId) as { run_id: string; cost_usd: number } | undefined;
 
     expect(orphan).toBeDefined();
-    expect(orphan!.cost_usd).toBeCloseTo(1.20);
+    expect(orphan!.cost_usd).toBeCloseTo(1.2);
   });
 });
 
 describe('cost_log schema migration', () => {
   it('creates all token tracking columns on fresh DB', () => {
     const db = _getDb();
-    const cols = db
-      .prepare('PRAGMA table_info(cost_log)')
-      .all() as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(cost_log)').all() as Array<{
+      name: string;
+    }>;
     const colNames = cols.map((c) => c.name);
 
     expect(colNames).toContain('input_tokens');
@@ -862,9 +863,9 @@ describe('cost_log schema migration', () => {
 
   it('creates run_id column on task_run_logs', () => {
     const db = _getDb();
-    const cols = db
-      .prepare('PRAGMA table_info(task_run_logs)')
-      .all() as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(task_run_logs)').all() as Array<{
+      name: string;
+    }>;
     const colNames = cols.map((c) => c.name);
 
     expect(colNames).toContain('run_id');
@@ -884,7 +885,9 @@ describe('cost_log schema migration', () => {
 
     const db = _getDb();
     const row = db
-      .prepare('SELECT run_id, cost_source FROM cost_log WHERE group_folder = ?')
+      .prepare(
+        'SELECT run_id, cost_source FROM cost_log WHERE group_folder = ?',
+      )
       .get('main') as { run_id: string; cost_source: string };
 
     expect(row.run_id).toBe('test-run');
@@ -944,5 +947,67 @@ describe('database initialization safety', () => {
     // The new in-memory db has the system default (5000), NOT our sentinel (1234)
     // This proves _initTestDatabase creates a fresh DB without our pragma call
     expect(result[0].timeout).not.toBe(1234);
+  });
+});
+
+describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
+  beforeEach(() => {
+    // messages.chat_jid has a FK to chats(jid); seed both chats up front
+    storeChatMetadata('slack:dev-team', '2026-04-10T00:00:00.000Z');
+    storeChatMetadata('slack:qa-sentinel', '2026-04-10T00:00:00.000Z');
+  });
+
+  it('returns true for a row written by the IPC injection path', () => {
+    storeMessage({
+      id: '1775796300.543699',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: '@Fleet [DISPATCH-ROUTED] work',
+      timestamp: '2026-04-10T07:00:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    expect(isIpcInjectedMessage('1775796300.543699', 'slack:dev-team')).toBe(
+      true,
+    );
+  });
+
+  it('returns false for a non-ipc row (regular bot/user message)', () => {
+    storeMessage({
+      id: '1775796400.000001',
+      chat_jid: 'slack:dev-team',
+      sender: 'U0BOT123',
+      sender_name: 'Fleet',
+      content: 'bot output',
+      timestamp: '2026-04-10T07:01:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+    });
+    expect(isIpcInjectedMessage('1775796400.000001', 'slack:dev-team')).toBe(
+      false,
+    );
+  });
+
+  it('returns false when no row exists', () => {
+    expect(isIpcInjectedMessage('nonexistent.ts', 'slack:dev-team')).toBe(
+      false,
+    );
+  });
+
+  it('returns false when the id matches but chat_jid differs', () => {
+    storeMessage({
+      id: '1775796500.000001',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: 'injected',
+      timestamp: '2026-04-10T07:02:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+    });
+    expect(isIpcInjectedMessage('1775796500.000001', 'slack:qa-sentinel')).toBe(
+      false,
+    );
   });
 });

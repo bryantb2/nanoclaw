@@ -133,8 +133,11 @@ describe('processMessageIpc', () => {
   });
 
   describe('message injection', () => {
-    it('calls injectMessage with correct args after sendMessage', async () => {
-      const sendMessage = vi.fn().mockResolvedValue(undefined);
+    it('calls injectMessage with real ts from sendMessage', async () => {
+      // Option B: sendMessage returns the Slack ts, processMessageIpc passes
+      // it through to injectMessage so the injected trigger row uses the
+      // real ts as its id (usable as thread_ts by selectThreadMessage).
+      const sendMessage = vi.fn().mockResolvedValue('1775796300.543699');
       const injectMessage = vi.fn();
 
       await processMessageIpc(
@@ -153,6 +156,35 @@ describe('processMessageIpc', () => {
         'slack:dev-team',
         '@Fleet [DISPATCH-ROUTED] build feature X',
         'ipc:slack_dispatch',
+        '1775796300.543699',
+      );
+    });
+
+    it('passes undefined ts to injectMessage when sendMessage returns undefined', async () => {
+      // Option B fallback: when sendMessage queues/drops (returns undefined),
+      // injectMessage still gets called with undefined so it can fall back to
+      // a synthetic id — Option A's isValidThreadTs filter then routes the
+      // reply to the main channel instead of failing.
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      const injectMessage = vi.fn();
+
+      await processMessageIpc(
+        {
+          type: 'message',
+          chatJid: 'slack:dev-team',
+          text: '@Fleet [DISPATCH-ROUTED] send-failed task',
+        },
+        'slack_dispatch',
+        true,
+        groups,
+        { sendMessage, injectMessage },
+      );
+
+      expect(injectMessage).toHaveBeenCalledWith(
+        'slack:dev-team',
+        '@Fleet [DISPATCH-ROUTED] send-failed task',
+        'ipc:slack_dispatch',
+        undefined,
       );
     });
 

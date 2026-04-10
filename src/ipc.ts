@@ -11,18 +11,37 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
+  /**
+   * Send a message via the owning channel. Returns the platform-native
+   * message id on success (Slack: the `ts` usable as `thread_ts`) so IPC
+   * routing can anchor the injected trigger on the real Slack message
+   * rather than a synthetic id. Returns `undefined` when the channel
+   * queued/dropped the message or has no usable id.
+   */
   sendMessage: (
     jid: string,
     text: string,
     opts?: { threadTs?: string },
-  ) => Promise<void>;
+  ) => Promise<string | undefined>;
   /**
    * Store a message in the DB and enqueue the target group for processing.
    * Used by IPC routing so dispatch-routed messages trigger container spawns.
    * Bot-posted Slack messages are filtered by getNewMessages (is_bot_message=0),
    * so IPC must inject messages directly to bypass that filter.
+   *
+   * `realTs` is the platform-native ts returned by `sendMessage`. When
+   * present, it becomes `messages.id` so that `selectThreadMessage` picks
+   * up the real Slack timestamp and replies thread correctly. When absent
+   * (send failed or queued), the closure falls back to a synthetic
+   * `ipc-{timestamp}-{rand}` id which `isValidThreadTs` filters out — the
+   * reply then posts to the main channel (Option A safety net).
    */
-  injectMessage?: (chatJid: string, text: string, senderName: string) => void;
+  injectMessage?: (
+    chatJid: string,
+    text: string,
+    senderName: string,
+    realTs?: string,
+  ) => void;
   uploadFile: (params: {
     channelId: string;
     filePath: string;
@@ -228,16 +247,20 @@ export async function processMessageIpc(
     data.threadTs && !data.threadTs.startsWith('ipc-')
       ? data.threadTs
       : undefined;
-  await deps.sendMessage(
+  // Option B: capture the real Slack ts returned by sendMessage and pass it
+  // to injectMessage so the injected trigger row uses the real ts as its id.
+  // selectThreadMessage then picks that real ts as thread_ts for the target
+  // group's reply, restoring proper threading under the routing message.
+  const sentTs = await deps.sendMessage(
     data.chatJid,
     data.text,
     validThreadTs ? { threadTs: validThreadTs } : undefined,
   );
   if (deps.injectMessage) {
-    deps.injectMessage(data.chatJid, data.text, `ipc:${sourceGroup}`);
+    deps.injectMessage(data.chatJid, data.text, `ipc:${sourceGroup}`, sentTs);
   }
   logger.info(
-    { chatJid: data.chatJid, sourceGroup },
+    { chatJid: data.chatJid, sourceGroup, sentTs },
     'IPC message sent',
   );
   return 'sent';

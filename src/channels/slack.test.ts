@@ -45,7 +45,9 @@ vi.mock('@slack/bolt', () => ({
         test: vi.fn().mockResolvedValue({ user_id: 'U_BOT_123' }),
       },
       chat: {
-        postMessage: vi.fn().mockResolvedValue(undefined),
+        postMessage: vi
+          .fn()
+          .mockResolvedValue({ ok: true, ts: '1700000000.000001' }),
       },
       conversations: {
         list: vi.fn().mockResolvedValue({
@@ -649,6 +651,63 @@ describe('SlackChannel', () => {
         channel: 'C0123456789',
         text: 'A'.repeat(500),
       });
+    });
+
+    it('returns the Slack ts from chat.postMessage (Option B)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      currentApp().client.chat.postMessage.mockResolvedValueOnce({
+        ok: true,
+        ts: '1775796300.543699',
+      });
+
+      const ts = await channel.sendMessage('slack:C0123456789', 'hello');
+      expect(ts).toBe('1775796300.543699');
+    });
+
+    it('returns first chunk ts when splitting long messages (Option B)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // First call returns the anchor ts; subsequent calls return different ts
+      currentApp()
+        .client.chat.postMessage.mockResolvedValueOnce({
+          ok: true,
+          ts: '1775796300.111111',
+        })
+        .mockResolvedValueOnce({ ok: true, ts: '1775796300.222222' });
+
+      const ts = await channel.sendMessage(
+        'slack:C0123456789',
+        'X'.repeat(4500),
+      );
+      // Subsequent replies thread under the FIRST chunk
+      expect(ts).toBe('1775796300.111111');
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns undefined when disconnected (message queued)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      // Don't connect
+      const ts = await channel.sendMessage('slack:C0123456789', 'queued');
+      expect(ts).toBeUndefined();
+    });
+
+    it('returns undefined when postMessage throws (error queued)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      currentApp().client.chat.postMessage.mockRejectedValueOnce(
+        new Error('Slack API down'),
+      );
+
+      const ts = await channel.sendMessage('slack:C0123456789', 'fails');
+      expect(ts).toBeUndefined();
     });
 
     it('sends exactly-4000-char messages as a single message', async () => {

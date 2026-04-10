@@ -810,7 +810,8 @@ export async function runContainerAgent(
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
           totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
-          computedCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+          computedCostUsd:
+            errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
           tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
         return;

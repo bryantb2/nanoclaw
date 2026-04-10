@@ -100,7 +100,9 @@ function formatTasksTable(
     }
     // Extract user message from XML context wrapper, strip mentions
     const rawMsg = row?.original_message ?? '';
-    const msgMatch = rawMsg.match(/<message\s+sender="[^"]*"[^>]*>([\s\S]*?)<\/message>/);
+    const msgMatch = rawMsg.match(
+      /<message\s+sender="[^"]*"[^>]*>([\s\S]*?)<\/message>/,
+    );
     const cleanMsg = (msgMatch ? msgMatch[1] : rawMsg)
       .replace(/&lt;@[A-Z0-9]+&gt;/g, '')
       .replace(/<@[A-Z0-9]+>/g, '')
@@ -422,7 +424,7 @@ export class SlackChannel implements Channel {
     jid: string,
     text: string,
     opts?: { threadTs?: string },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -431,33 +433,55 @@ export class SlackChannel implements Channel {
         { jid, queueSize: this.outgoingQueue.length },
         'Slack disconnected, message queued',
       );
-      return;
+      return undefined;
     }
 
     try {
-      // Slack limits messages to ~4000 characters; split if needed
-      if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({
+      // Slack limits messages to ~4000 characters; split if needed.
+      // When splitting, return the FIRST chunk's ts — subsequent replies
+      // thread under the first message (which is where users land when
+      // clicking the thread in their client).
+      //
+      // The Slack SDK normally throws on errors, but some failure modes
+      // (e.g. `not_in_channel`, `channel_not_found`, `is_archived`) can
+      // resolve with `{ ok: false, error: '...' }` instead. Treat those
+      // as failures so we don't (a) return `undefined` masquerading as
+      // success and (b) silently anchor IPC threading on a later chunk's
+      // ts when the first chunk soft-failed.
+      let firstTs: string | undefined;
+      const post = async (chunk: string): Promise<string | undefined> => {
+        const resp = await this.app.client.chat.postMessage({
           channel: channelId,
-          text: markdownToSlackMrkdwn(text),
+          text: markdownToSlackMrkdwn(chunk),
           ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
         });
+        if (!resp.ok || !resp.ts) {
+          throw new Error(
+            `Slack chat.postMessage soft-failed: ${resp.error ?? 'unknown'}`,
+          );
+        }
+        return resp.ts;
+      };
+      if (text.length <= MAX_MESSAGE_LENGTH) {
+        firstTs = await post(text);
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          await this.app.client.chat.postMessage({
-            channel: channelId,
-            text: markdownToSlackMrkdwn(text.slice(i, i + MAX_MESSAGE_LENGTH)),
-            ...(opts?.threadTs ? { thread_ts: opts.threadTs } : {}),
-          });
+          const ts = await post(text.slice(i, i + MAX_MESSAGE_LENGTH));
+          if (firstTs === undefined) firstTs = ts;
         }
       }
-      logger.info({ jid, length: text.length }, 'Slack message sent');
+      logger.info(
+        { jid, length: text.length, ts: firstTs },
+        'Slack message sent',
+      );
+      return firstTs;
     } catch (err) {
       this.outgoingQueue.push({ jid, text });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send Slack message, queued',
       );
+      return undefined;
     }
   }
 

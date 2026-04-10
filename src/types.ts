@@ -124,11 +124,22 @@ export interface CrossLoopSignal {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
+  /**
+   * Send a message. Returns the platform-native message identifier on
+   * success (Slack: the `ts` returned by chat.postMessage — usable as
+   * `thread_ts` for subsequent replies). Returns `undefined` when the
+   * message could not be sent and was queued/dropped, or when the
+   * channel has no meaningful identifier for the IPC threading path.
+   *
+   * Option B (IPC threading) relies on this return value to anchor
+   * dispatch-routed replies to real Slack timestamps instead of
+   * synthetic `ipc-` IDs.
+   */
   sendMessage(
     jid: string,
     text: string,
     opts?: { threadTs?: string },
-  ): Promise<void>;
+  ): Promise<string | undefined>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

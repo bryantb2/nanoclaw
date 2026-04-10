@@ -39,6 +39,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  isIpcInjectedMessage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -48,6 +49,10 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import {
+  injectIpcMessage,
+  shouldDropBotEchoForIpcInjection,
+} from './ipc-inject.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -791,6 +796,14 @@ async function main(): Promise<void> {
           logger.debug({ err }, 'Failed to add eyes reaction'),
         );
       }
+      // Option B race guard: the Slack webhook echoes bot messages back with
+      // the real ts as id. When IPC routing already injected a row at that
+      // (id, chat_jid) with sender='ipc' and is_bot_message=0, replacing it
+      // with the echo (is_bot_message=1) would make the trigger invisible to
+      // getNewMessages and silently drop the dispatched task.
+      if (shouldDropBotEchoForIpcInjection(msg, isIpcInjectedMessage)) {
+        return;
+      }
       storeMessage(msg);
     },
     onChatMetadata: (
@@ -969,44 +982,17 @@ async function main(): Promise<void> {
         : opts;
       return channel.sendMessage(jid, text, threadOpts);
     },
-    injectMessage: (chatJid, text, senderName) => {
-      // IPC messages bypass the Slack channel adapter, so the
-      // <@UBOTID> → @Fleet translation that normally happens in
-      // slack.ts never runs. Without it, TRIGGER_PATTERN (/^@Fleet\b/i)
-      // won't match and the message is ignored by the trigger check.
-      // Apply the same translation here: if content contains a Slack
-      // mention and doesn't already match the trigger, prepend @Fleet.
-      let content = text;
-      if (
-        !TRIGGER_PATTERN.test(content.trim()) &&
-        /<@U[A-Z0-9]+(|[^>]*)?>/.test(content)
-      ) {
-        content = `@${ASSISTANT_NAME} ${content}`;
-      }
-
-      // Use ISO 8601 timestamp — must match the format used by the
-      // Slack channel adapter and router_state.last_timestamp.
-      // getNewMessages compares timestamps as strings (WHERE timestamp > ?),
-      // so epoch format would be lexicographically less than ISO and
-      // never picked up.
-      const ts = new Date().toISOString();
-      const rand = Math.random().toString(36).slice(2, 8);
-      storeMessage({
-        id: `ipc-${ts}-${rand}`,
-        chat_jid: chatJid,
-        sender: 'ipc',
-        sender_name: senderName,
-        content,
-        timestamp: ts,
-        // is_from_me=true so the trigger sender check passes without
-        // requiring 'ipc' in the sender allowlist.
-        // is_bot_message=false so getNewMessages includes this row
-        // (its WHERE clause requires is_bot_message = 0, excluding bot messages).
-        is_from_me: true,
-        is_bot_message: false,
-      });
-      queue.enqueueMessageCheck(chatJid);
-    },
+    injectMessage: (chatJid, text, senderName, realTs) =>
+      injectIpcMessage(
+        {
+          storeMessage,
+          enqueueMessageCheck: (jid) => queue.enqueueMessageCheck(jid),
+        },
+        chatJid,
+        text,
+        senderName,
+        realTs,
+      ),
     uploadFile: async (params) => {
       const channel = channels.find((ch) => ch.uploadFile);
       if (!channel?.uploadFile)

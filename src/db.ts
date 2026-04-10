@@ -343,6 +343,25 @@ export function setLastGroupSync(): void {
 }
 
 /**
+ * Returns true if a row at (id, chat_jid) already exists with sender='ipc'
+ * — i.e. the row was written by the IPC injection path (Option B uses the
+ * real Slack ts as the row id).
+ *
+ * Used by the Slack webhook echo handler to skip re-ingesting the bot's own
+ * message when IPC already stored it. Without this guard, the echo would
+ * `INSERT OR REPLACE` the injected row with `is_bot_message=1` — which
+ * `getNewMessages` filters out, silently dropping the dispatched trigger.
+ */
+export function isIpcInjectedMessage(id: string, chatJid: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM messages WHERE id = ? AND chat_jid = ? AND sender = 'ipc' LIMIT 1`,
+    )
+    .get(id, chatJid);
+  return row !== undefined;
+}
+
+/**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */

@@ -625,13 +625,20 @@ describe('GroupQueue', () => {
       // Trigger group creation via enqueue then let it complete
       let resolve: () => void;
       const processMessages2 = vi.fn(async () => {
-        await new Promise<void>((r) => { resolve = r; });
+        await new Promise<void>((r) => {
+          resolve = r;
+        });
         return true;
       });
       queue.setProcessMessagesFn(processMessages2);
       queue.enqueueMessageCheck('group1@g.us');
       await vi.advanceTimersByTimeAsync(10);
-      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+      queue.registerProcess(
+        'group1@g.us',
+        {} as any,
+        'container-1',
+        'test-group',
+      );
 
       // Complete the run so group is inactive
       resolve!();
@@ -646,14 +653,21 @@ describe('GroupQueue', () => {
       let resolveProcess: () => void;
 
       const processMessages = vi.fn(async () => {
-        await new Promise<void>((resolve) => { resolveProcess = resolve; });
+        await new Promise<void>((resolve) => {
+          resolveProcess = resolve;
+        });
         return true;
       });
 
       queue.setProcessMessagesFn(processMessages);
       queue.enqueueMessageCheck('group1@g.us');
       await vi.advanceTimersByTimeAsync(10);
-      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+      queue.registerProcess(
+        'group1@g.us',
+        {} as any,
+        'container-1',
+        'test-group',
+      );
 
       const writeFileSync = vi.mocked(fs.default.writeFileSync);
       writeFileSync.mockClear();
@@ -676,14 +690,21 @@ describe('GroupQueue', () => {
       let resolveProcess: () => void;
 
       const processMessages = vi.fn(async () => {
-        await new Promise<void>((resolve) => { resolveProcess = resolve; });
+        await new Promise<void>((resolve) => {
+          resolveProcess = resolve;
+        });
         return true;
       });
 
       queue.setProcessMessagesFn(processMessages);
       queue.enqueueMessageCheck('group1@g.us');
       await vi.advanceTimersByTimeAsync(10);
-      queue.registerProcess('group1@g.us', {} as any, 'container-1', 'test-group');
+      queue.registerProcess(
+        'group1@g.us',
+        {} as any,
+        'container-1',
+        'test-group',
+      );
 
       expect(queue.forceStopGroup('group1@g.us')).toBe(true);
 
