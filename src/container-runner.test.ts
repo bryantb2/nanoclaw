@@ -313,7 +313,7 @@ describe('cost tracking through container-runner', () => {
       status: 'success',
       result: 'First response',
       newSessionId: 'sess-3',
-      totalCostUsd: 0.10,
+      totalCostUsd: 0.1,
       computedCostUsd: 0.15,
     });
     await vi.advanceTimersByTimeAsync(10);
@@ -374,5 +374,58 @@ describe('cost tracking through container-runner', () => {
     expect(result.status).toBe('error');
     expect(result.computedCostUsd).toBe(0.05);
     expect(result.totalCostUsd).toBe(0.05); // bestCost prefers computed
+  });
+
+  it('recovers cost from IPC file when container times out with no output', async () => {
+    // Mock fs.readFileSync to return IPC cost data for the cost.json path
+    const fs = (await import('fs')).default;
+    const originalReadFileSync = fs.readFileSync;
+    const originalUnlinkSync = fs.unlinkSync;
+    (fs.readFileSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: unknown) => {
+        if (typeof p === 'string' && p.endsWith('cost.json')) {
+          return JSON.stringify({
+            costUsd: 0.42,
+            inputTokens: 8000,
+            outputTokens: 2000,
+            cacheCreationInputTokens: 500,
+            cacheReadInputTokens: 3000,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        return '';
+      },
+    );
+    (fs.unlinkSync as unknown as ReturnType<typeof vi.fn>) = vi.fn();
+
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    // No output emitted — fire the hard timeout
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('timed out');
+    expect(result.totalCostUsd).toBeCloseTo(0.42);
+    expect(result.computedCostUsd).toBeCloseTo(0.42);
+    expect(result.tokenUsage).toEqual({
+      inputTokens: 8000,
+      outputTokens: 2000,
+      cacheCreationInputTokens: 500,
+      cacheReadInputTokens: 3000,
+    });
+
+    // Restore mocks
+    (fs.readFileSync as ReturnType<typeof vi.fn>).mockImplementation(() => '');
+    (fs.unlinkSync as unknown) = originalUnlinkSync;
+    void originalReadFileSync;
   });
 });
