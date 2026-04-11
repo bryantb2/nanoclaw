@@ -110,3 +110,38 @@ export function shouldDropBotEchoForIpcInjection(
   if (!msg.is_bot_message) return false;
   return isIpcInjected(msg.id, msg.chat_jid);
 }
+
+/**
+ * Resolve the `thread_ts` for an outbound IPC-routed message.
+ *
+ * The rule: **only refresh a caller-specified `threadTs`** — never force one
+ * on a caller that did not ask for threading. This prevents "stream crossing"
+ * bugs where fresh channel posts (dispatch routing messages, cron digests,
+ * new-topic messages) get forcibly threaded under whatever the latest trigger
+ * in the target channel happens to be.
+ *
+ * Semantics:
+ *
+ * - `opts.threadTs` set + `latestThreadTs` set → refresh to `latestThreadTs`
+ *   (this is the original "container baked a stale ts, refresh to the latest
+ *   trigger the poller saw" case for self-replies)
+ * - `opts.threadTs` set + `latestThreadTs` unset → keep caller's `threadTs`
+ * - `opts.threadTs` unset (or `opts` undefined) → **never** inject `threadTs`
+ *   regardless of `latestThreadTs`. The caller is making a fresh channel post.
+ *
+ * Background: Option B (PR #31) made `latestThreadTs` populate from real
+ * Slack ts values on IPC-injected rows. The old closure in `index.ts`
+ * unconditionally overrode `opts` with `latestThreadTs[jid]`, which combined
+ * with Option B to forcibly thread every dispatch routing message under the
+ * most recent IPC injection in the target channel. That's the bug this
+ * helper fixes.
+ */
+export function resolveOutboundThreadOpts(
+  opts: { threadTs?: string } | undefined,
+  latestThreadTs: string | undefined,
+): { threadTs?: string } | undefined {
+  if (opts?.threadTs && latestThreadTs) {
+    return { ...opts, threadTs: latestThreadTs };
+  }
+  return opts;
+}

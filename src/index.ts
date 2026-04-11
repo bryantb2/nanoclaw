@@ -51,6 +51,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import {
   injectIpcMessage,
+  resolveOutboundThreadOpts,
   shouldDropBotEchoForIpcInjection,
 } from './ipc-inject.js';
 import { startIpcWatcher } from './ipc.js';
@@ -976,10 +977,12 @@ async function main(): Promise<void> {
     sendMessage: (jid, text, opts) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      // Use the latest trigger message ts for threading (overrides stale container-baked ts)
-      const threadOpts = latestThreadTs[jid]
-        ? { ...opts, threadTs: latestThreadTs[jid] }
-        : opts;
+      // Refresh a caller-specified threadTs with the latest tracked trigger
+      // ts for this chat — but NEVER force a threadTs on a caller that
+      // didn't ask for threading. See resolveOutboundThreadOpts docs for the
+      // "stream crossing" bug this prevents (fresh dispatch routing messages
+      // getting threaded under unrelated older triggers).
+      const threadOpts = resolveOutboundThreadOpts(opts, latestThreadTs[jid]);
       return channel.sendMessage(jid, text, threadOpts);
     },
     injectMessage: (chatJid, text, senderName, realTs) =>

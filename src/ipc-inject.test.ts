@@ -11,6 +11,7 @@ vi.mock('./config.js', () => ({
 import {
   buildInjectedMessage,
   injectIpcMessage,
+  resolveOutboundThreadOpts,
   shouldDropBotEchoForIpcInjection,
   translateMentionToTrigger,
 } from './ipc-inject.js';
@@ -270,5 +271,123 @@ describe('shouldDropBotEchoForIpcInjection', () => {
     ).toBe(false);
     // Optimization: don't query the DB for user messages
     expect(isIpcInjected).not.toHaveBeenCalled();
+  });
+});
+
+// --- resolveOutboundThreadOpts ---
+// Regression suite for the "stream crossing" bug where fresh channel posts
+// (dispatch routing messages, cron digests) were forcibly threaded under
+// whatever the latest trigger ts happened to be in the target channel.
+//
+// The rule: only REFRESH a caller-specified threadTs. Never FORCE one on
+// a caller that didn't ask for threading.
+
+describe('resolveOutboundThreadOpts (thread crossing regression guard)', () => {
+  describe('caller did not ask for threading — must NEVER add threadTs', () => {
+    it('opts=undefined, latestThreadTs=undefined → returns undefined', () => {
+      expect(resolveOutboundThreadOpts(undefined, undefined)).toBeUndefined();
+    });
+
+    it('opts=undefined, latestThreadTs set → returns undefined (NO override)', () => {
+      // THE critical regression case: dispatch writes an IPC file with no
+      // threadTs field → opts is undefined here → must pass through unchanged
+      // even if latestThreadTs is set from a previous injection in the target.
+      expect(
+        resolveOutboundThreadOpts(undefined, '1775848377.714869'),
+      ).toBeUndefined();
+    });
+
+    it('opts={}, latestThreadTs set → returns {} (NO override)', () => {
+      // Caller passed an empty opts bag (explicitly no threadTs) — still
+      // must not inherit latestThreadTs. Otherwise dispatch routing gets
+      // threaded under an unrelated older trigger.
+      const result = resolveOutboundThreadOpts({}, '1775848377.714869');
+      expect(result).toEqual({});
+      expect(result?.threadTs).toBeUndefined();
+    });
+
+    it('opts with other fields but no threadTs → other fields preserved, no threadTs added', () => {
+      const result = resolveOutboundThreadOpts(
+        { threadTs: undefined } as { threadTs?: string },
+        '1775848377.714869',
+      );
+      expect(result?.threadTs).toBeUndefined();
+    });
+  });
+
+  describe('caller asked for threading — refresh behavior preserved', () => {
+    it('opts.threadTs set, latestThreadTs unset → keeps caller threadTs', () => {
+      expect(
+        resolveOutboundThreadOpts({ threadTs: '1775796300.543699' }, undefined),
+      ).toEqual({ threadTs: '1775796300.543699' });
+    });
+
+    it('opts.threadTs set, latestThreadTs set → refreshes to latestThreadTs', () => {
+      // Original intent of the override: container baked a stale ts from
+      // session start; refresh to the newest trigger the poller has seen.
+      const result = resolveOutboundThreadOpts(
+        { threadTs: '1775796300.543699' },
+        '1775858500.000001',
+      );
+      expect(result).toEqual({ threadTs: '1775858500.000001' });
+    });
+
+    it('opts.threadTs and latestThreadTs identical → idempotent', () => {
+      expect(
+        resolveOutboundThreadOpts(
+          { threadTs: '1775796300.543699' },
+          '1775796300.543699',
+        ),
+      ).toEqual({ threadTs: '1775796300.543699' });
+    });
+
+    it('preserves other opts fields when refreshing threadTs', () => {
+      // Guards against a future caller adding new opts fields — the override
+      // must spread them through.
+      type OptsWithExtras = { threadTs?: string; blocks?: unknown[] };
+      const result = resolveOutboundThreadOpts(
+        { threadTs: 'T1', blocks: [{ type: 'section' }] } as OptsWithExtras,
+        'T2',
+      ) as OptsWithExtras;
+      expect(result.threadTs).toBe('T2');
+      expect(result.blocks).toEqual([{ type: 'section' }]);
+    });
+  });
+
+  describe('regression — specific failure modes this guard prevents', () => {
+    it('dispatch routing scenario: cross-group fresh post does not inherit target channel trigger', () => {
+      // Repro of the production bug on 2026-04-10:
+      // - Dispatch writes an IPC file with no threadTs (fresh routing post)
+      // - latestThreadTs[target_jid] = real ts of a previous IPC injection
+      // - Expected: new routing message posts as a FRESH channel message
+      // - Previous buggy behavior: new routing threaded under the prior ts
+      const dispatchIpcOpts = undefined; // dispatch never sets threadTs for routing
+      const staleLatestForTarget = '1775848377.714869'; // deploy test ts
+      const resolved = resolveOutboundThreadOpts(
+        dispatchIpcOpts,
+        staleLatestForTarget,
+      );
+      expect(resolved).toBeUndefined(); // posts to channel, not to thread
+    });
+
+    it('container self-reply scenario: threadTs IS refreshed for same-channel replies', () => {
+      // The original intent of the override: container baked a stale ts,
+      // refresh to the current newest trigger in the channel. This path
+      // must still work after the fix.
+      const containerBakedOpts = { threadTs: '1775800000.000000' }; // stale
+      const currentLatest = '1775850000.000000'; // newer
+      expect(
+        resolveOutboundThreadOpts(containerBakedOpts, currentLatest),
+      ).toEqual({ threadTs: '1775850000.000000' });
+    });
+
+    it('cron digest scenario: scheduled task output posts fresh to its target channel', () => {
+      // Cron-spawned container with NANOCLAW_THREAD_TS unset → MCP send_message
+      // tool doesn't bake threadTs → IPC file has no threadTs → opts is
+      // undefined when the closure runs. Must NOT inherit latestThreadTs.
+      expect(
+        resolveOutboundThreadOpts(undefined, '1775800000.000000'),
+      ).toBeUndefined();
+    });
   });
 });
