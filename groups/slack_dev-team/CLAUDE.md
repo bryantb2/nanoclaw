@@ -72,6 +72,37 @@ Do this for whichever repo you're about to work on. Use the repo's default branc
 - Use git credential helper at ~/github-credential-helper.sh for GitHub auth (generates fresh GitHub App tokens)
 - Push branches and open PRs via GitHub API or gh CLI
 
+### Pre-Push Safety Check (MANDATORY before every `git push`)
+
+Dev-team and qa-sentinel both have write access to overlapping forcify clones. If both agents push to the same branch, you get force-push races and lost commits. Before every push to an existing branch, run this check:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git fetch origin "$BRANCH" 2>/dev/null || true
+
+# If the branch exists on origin, verify local is a fast-forward over remote.
+REMOTE_REF="origin/$BRANCH"
+if git rev-parse --verify "$REMOTE_REF" >/dev/null 2>&1; then
+  REMOTE_HEAD=$(git rev-parse "$REMOTE_REF")
+  LOCAL_HEAD=$(git rev-parse HEAD)
+  if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ] && ! git merge-base --is-ancestor "$REMOTE_HEAD" HEAD; then
+    echo "[BLOCK] remote $BRANCH has moved since last fetch and local is NOT ahead"
+    echo "Another agent (likely qa-sentinel or a previous dev-team session) pushed to this branch"
+    echo "Either rebase on top or report collision to dispatch — do NOT force-push"
+    # Inspect the remote commits you're missing
+    git log --oneline "$LOCAL_HEAD..$REMOTE_HEAD"
+    exit 1
+  fi
+fi
+```
+
+**If the check blocks:**
+1. Read the remote commits (`git log $LOCAL_HEAD..$REMOTE_HEAD`). If they already solve your problem, skip the push and exit — your work is redundant.
+2. If they don't solve your problem, `git pull --rebase origin $BRANCH` and resolve conflicts. Re-run the full test suite locally before retrying the push.
+3. If you can't rebase cleanly (conflicting semantics, not just textual), write a `branch_collision` signal to the completion record and stop. Do NOT force-push to resolve it.
+
+**Never use `git push --force` without human authorization.** Force-push rewrites history and erases another agent's work silently.
+
 ## Post-PR Protocol (MANDATORY)
 
 After opening ANY PR with `gh pr create`, you MUST complete ALL of the following before declaring the task done. A PR is NOT done until CI passes.
