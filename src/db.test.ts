@@ -7,6 +7,7 @@ import {
   _initTestDatabase,
   _initFileDatabaseForTest,
   _getDb,
+  _runMigrationsForTest,
   appendCostLog,
   createTask,
   deleteTask,
@@ -1054,5 +1055,202 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
     expect(isIpcInjectedMessage('1775796600.000001', 'slack:dev-team')).toBe(
       false,
     );
+  });
+});
+
+describe('messages.origin migration backfill', () => {
+  // Simulates a restart against a pre-PR-#36 prod DB:
+  //   - Pre-Option-B rows: sender='ipc' + id LIKE 'ipc-%' (synthetic)
+  //   - Post-Option-B rows: sender='ipc' + real platform ts (PR #31)
+  //   - Webhook rows: sender=user/bot id, anything else
+  // None of these rows have `origin` set. The migration must classify each
+  // exactly once and leave no NULLs — otherwise isIpcInjectedMessage returns
+  // false on Option B rows and the webhook echo race regresses.
+  beforeEach(() => {
+    storeChatMetadata('slack:dev-team', '2026-04-10T00:00:00.000Z');
+    // Drop the origin column so we can repopulate as if pre-migration. SQLite
+    // can't DROP COLUMN on older versions, so we wipe values to NULL instead
+    // — semantically equivalent for the backfill UPDATEs (which only touch
+    // `WHERE origin IS NULL`).
+    const db = _getDb();
+    db.exec(`UPDATE messages SET origin = NULL`);
+  });
+
+  it('backfills a pre-Option-B synthetic row to origin=synthetic', () => {
+    const db = _getDb();
+    db.prepare(
+      `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    ).run(
+      'ipc-2026-04-09T12:00:00.000Z-abc123',
+      'slack:dev-team',
+      'ipc',
+      'ipc:slack_dispatch',
+      'pre-PR-31 synthetic injection',
+      '2026-04-09T12:00:00.000Z',
+      1,
+      0,
+    );
+
+    _runMigrationsForTest();
+
+    const row = db
+      .prepare(`SELECT origin FROM messages WHERE id = ?`)
+      .get('ipc-2026-04-09T12:00:00.000Z-abc123') as { origin: string };
+    expect(row.origin).toBe('synthetic');
+    // Synthetic rows must NOT register as IPC injections — they aren't
+    // anchorable Slack ts values, so the webhook echo guard doesn't apply.
+    expect(
+      isIpcInjectedMessage(
+        'ipc-2026-04-09T12:00:00.000Z-abc123',
+        'slack:dev-team',
+      ),
+    ).toBe(false);
+  });
+
+  it('backfills a post-Option-B real-ts row to origin=ipc', () => {
+    // This is the load-bearing case: PR #31 shipped Option B injections
+    // (sender='ipc' + real platform ts) into prod. Pre-PR-#36 those rows
+    // have origin IS NULL. After migration they MUST land at origin='ipc'
+    // so isIpcInjectedMessage returns true and the webhook echo guard fires.
+    const db = _getDb();
+    db.prepare(
+      `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    ).run(
+      '1775796300.543699',
+      'slack:dev-team',
+      'ipc',
+      'ipc:slack_dispatch',
+      '@Fleet [DISPATCH-ROUTED] in-flight Option B row from PR #31',
+      '2026-04-10T07:00:00.000Z',
+      1,
+      0,
+    );
+
+    _runMigrationsForTest();
+
+    const row = db
+      .prepare(`SELECT origin FROM messages WHERE id = ?`)
+      .get('1775796300.543699') as { origin: string };
+    expect(row.origin).toBe('ipc');
+    expect(isIpcInjectedMessage('1775796300.543699', 'slack:dev-team')).toBe(
+      true,
+    );
+  });
+
+  it('backfills a regular webhook row to origin=webhook', () => {
+    const db = _getDb();
+    db.prepare(
+      `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    ).run(
+      '1775796400.111111',
+      'slack:dev-team',
+      'U0HUMAN1',
+      'Blake',
+      'hi @Fleet',
+      '2026-04-10T07:01:00.000Z',
+      0,
+      0,
+    );
+
+    _runMigrationsForTest();
+
+    const row = db
+      .prepare(`SELECT origin FROM messages WHERE id = ?`)
+      .get('1775796400.111111') as { origin: string };
+    expect(row.origin).toBe('webhook');
+  });
+
+  it('leaves NO rows with NULL origin after migration (mixed-population scenario)', () => {
+    const db = _getDb();
+    const insert = db.prepare(
+      `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    );
+    // 1 synthetic, 1 Option B, 2 webhook
+    insert.run(
+      'ipc-2026-04-09T11:00:00.000Z-aaa111',
+      'slack:dev-team',
+      'ipc',
+      'ipc:slack_dispatch',
+      'synthetic',
+      '2026-04-09T11:00:00.000Z',
+      1,
+      0,
+    );
+    insert.run(
+      '1775790000.000001',
+      'slack:dev-team',
+      'ipc',
+      'ipc:slack_dispatch',
+      'option B',
+      '2026-04-10T06:00:00.000Z',
+      1,
+      0,
+    );
+    insert.run(
+      '1775790100.000001',
+      'slack:dev-team',
+      'U0HUMAN1',
+      'Blake',
+      'hi',
+      '2026-04-10T06:01:00.000Z',
+      0,
+      0,
+    );
+    insert.run(
+      '1775790200.000001',
+      'slack:dev-team',
+      'U0BOT123',
+      'Fleet',
+      'bot reply',
+      '2026-04-10T06:02:00.000Z',
+      1,
+      1,
+    );
+
+    _runMigrationsForTest();
+
+    const nullRows = db
+      .prepare(`SELECT COUNT(*) AS n FROM messages WHERE origin IS NULL`)
+      .get() as { n: number };
+    expect(nullRows.n).toBe(0);
+
+    const counts = db
+      .prepare(
+        `SELECT origin, COUNT(*) AS n FROM messages GROUP BY origin ORDER BY origin`,
+      )
+      .all() as Array<{ origin: string; n: number }>;
+    expect(counts).toEqual([
+      { origin: 'ipc', n: 1 },
+      { origin: 'synthetic', n: 1 },
+      { origin: 'webhook', n: 2 },
+    ]);
+  });
+
+  it('is idempotent — re-running the migration does not reclassify already-set rows', () => {
+    const db = _getDb();
+    // Manually pre-set origin to a value that would be "wrong" if re-classified
+    // (the synthetic id would otherwise match the LIKE 'ipc-%' clause).
+    db.prepare(
+      `INSERT INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'ipc-2026-04-09T10:00:00.000Z-zzz999',
+      'slack:dev-team',
+      'ipc',
+      'ipc:slack_dispatch',
+      'manually classified',
+      '2026-04-09T10:00:00.000Z',
+      1,
+      0,
+      'webhook', // intentionally "wrong" — proves WHERE origin IS NULL guards
+    );
+
+    _runMigrationsForTest();
+    _runMigrationsForTest();
+
+    const row = db
+      .prepare(`SELECT origin FROM messages WHERE id = ?`)
+      .get('ipc-2026-04-09T10:00:00.000Z-zzz999') as { origin: string };
+    // Should still be 'webhook' — the WHERE origin IS NULL clause skips it.
+    expect(row.origin).toBe('webhook');
   });
 });

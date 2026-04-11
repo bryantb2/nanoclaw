@@ -42,6 +42,27 @@ export interface RegisteredGroup {
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }
 
+/**
+ * Row provenance — classifies how a `messages` row arrived in the DB.
+ * - `'webhook'`   — inbound from a Slack/Telegram webhook (bot echoes,
+ *   user messages, channel activity)
+ * - `'ipc'`       — injected by IPC routing with a real platform ts as
+ *   id (Option B threading, PR #31)
+ * - `'synthetic'` — injected by IPC routing with a synthetic `ipc-` id
+ *   because the channel had no usable ts to anchor on
+ *
+ * Replaces the fragile id-prefix string check the IPC layer relied on.
+ */
+export type MessageOrigin = 'webhook' | 'ipc' | 'synthetic';
+
+/** Runtime list of all valid `MessageOrigin` values — single source of truth
+ *  for type-narrowing AND for the migration backfill / future CHECK clauses. */
+export const MESSAGE_ORIGINS: readonly MessageOrigin[] = [
+  'webhook',
+  'ipc',
+  'synthetic',
+] as const;
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -51,19 +72,8 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
-  /**
-   * Row provenance — classifies how this message arrived in the DB.
-   * - `'webhook'`   — inbound from a Slack/Telegram webhook (bot echoes,
-   *   user messages, channel activity)
-   * - `'ipc'`       — injected by IPC routing with a real platform ts as
-   *   id (Option B threading, PR #31)
-   * - `'synthetic'` — injected by IPC routing with a synthetic `ipc-` id
-   *   because the channel had no usable ts to anchor on
-   *
-   * Replaces the fragile id-prefix string check the IPC layer relied on.
-   * Defaults to 'webhook' in `storeMessage` when omitted.
-   */
-  origin?: 'webhook' | 'ipc' | 'synthetic';
+  /** See `MessageOrigin`. Defaults to 'webhook' in `storeMessage` when omitted. */
+  origin?: MessageOrigin;
 }
 
 export interface ScheduledTask {

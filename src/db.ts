@@ -7,6 +7,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR, TIMEZONE } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  MessageOrigin,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -38,7 +39,6 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_messages_origin ON messages(origin);
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -138,27 +138,32 @@ function createSchema(database: Database.Database): void {
   //
   // The origin column replaces the fragile id-prefix string check that
   // isValidThreadTs and isIpcInjectedMessage relied on.
+  //
+  // The ALTER is wrapped in its own try/catch so "column already exists" is
+  // silently tolerated (fresh-schema path + re-run idempotency). Backfill
+  // UPDATEs run UNGUARDED so any real failure surfaces in journalctl instead
+  // of leaving rows with origin IS NULL — which would silently break the
+  // webhook echo race guard (PR #36) for pre-migration Option B rows.
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN origin TEXT`);
-    database.exec(
-      `CREATE INDEX IF NOT EXISTS idx_messages_origin ON messages(origin)`,
-    );
-    // Backfill in priority order so each row gets exactly one classification.
-    // 1. Synthetic IPC rows (id starts with 'ipc-')
-    database.exec(
-      `UPDATE messages SET origin = 'synthetic' WHERE origin IS NULL AND id LIKE 'ipc-%'`,
-    );
-    // 2. Real-ts IPC injections (sender='ipc' but id is a real ts)
-    database.exec(
-      `UPDATE messages SET origin = 'ipc' WHERE origin IS NULL AND sender = 'ipc'`,
-    );
-    // 3. Everything else came from a webhook
-    database.exec(
-      `UPDATE messages SET origin = 'webhook' WHERE origin IS NULL`,
-    );
   } catch {
-    /* column already exists — index creation is idempotent */
+    /* column already exists — backfill below is still safe + idempotent */
   }
+  // Backfill in priority order so each row gets exactly one classification.
+  // All three UPDATEs are idempotent (the `origin IS NULL` guard makes
+  // re-runs no-ops) so running them on every startup is safe and cheap.
+  // 1. Synthetic IPC rows (id starts with 'ipc-')
+  database.exec(
+    `UPDATE messages SET origin = 'synthetic' WHERE origin IS NULL AND id LIKE 'ipc-%'`,
+  );
+  // 2. Real-ts IPC injections (sender='ipc' but id is a real ts)
+  database.exec(
+    `UPDATE messages SET origin = 'ipc' WHERE origin IS NULL AND sender = 'ipc'`,
+  );
+  // 3. Everything else came from a webhook
+  database.exec(
+    `UPDATE messages SET origin = 'webhook' WHERE origin IS NULL`,
+  );
 
   // Add max_budget_usd column to scheduled_tasks if it doesn't exist
   try {
@@ -279,6 +284,15 @@ export function _getDb(): Database.Database {
 export function _initFileDatabaseForTest(dbPath: string): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new Database(dbPath);
+  createSchema(db);
+}
+
+/**
+ * @internal - for tests only. Re-runs createSchema (CREATE IF NOT EXISTS +
+ * idempotent migrations + backfill UPDATEs) against the current DB so a test
+ * can simulate the "restart against a pre-migration prod DB" scenario.
+ */
+export function _runMigrationsForTest(): void {
   createSchema(db);
 }
 
@@ -439,7 +453,7 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
-  origin?: 'webhook' | 'ipc' | 'synthetic';
+  origin?: MessageOrigin;
 }): void {
   db.prepare(
     `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
