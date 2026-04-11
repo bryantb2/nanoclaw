@@ -144,6 +144,15 @@ function createSchema(database: Database.Database): void {
   // UPDATEs run UNGUARDED so any real failure surfaces in journalctl instead
   // of leaving rows with origin IS NULL — which would silently break the
   // webhook echo race guard (PR #36) for pre-migration Option B rows.
+  //
+  // SAFETY PRECONDITION: this unguarded backfill assumes restart-fleet.sh
+  // kills all agent containers BEFORE starting NanoClaw, so no concurrent
+  // writers are present during migration. Container writes during the
+  // backfill window could trigger SQLITE_BUSY (busy_timeout=5000ms in
+  // initDatabase), and because the UPDATEs are unguarded, an unhandled
+  // SQLITE_BUSY would crash NanoClaw boot. If you ever change
+  // restart-fleet.sh to skip the container kill, wrap each UPDATE in its
+  // own try/catch with logger.warn() instead.
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN origin TEXT`);
   } catch {
@@ -498,9 +507,12 @@ export function getNewMessages(
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // `origin` is included so callers can distinguish webhook/ipc/synthetic
+  // rows on read (PR #36 added the column on the write side; the SELECT
+  // lists were updated separately to avoid silent `undefined` reads).
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, origin
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -531,9 +543,11 @@ export function getMessagesSince(
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // `origin` is included so callers can distinguish webhook/ipc/synthetic
+  // rows on read (mirror of getNewMessages above).
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, origin
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
