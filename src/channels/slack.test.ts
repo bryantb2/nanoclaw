@@ -1103,6 +1103,41 @@ describe('SlackChannel', () => {
       expect(queue.find((q) => q.text === 'third')).toBeUndefined();
     });
 
+    it('flushes queued items in insertion order', async () => {
+      // Coverage gap from PR review: none of the other flush tests assert
+      // ORDER. Slack messages have user-visible chronology — a mutation
+      // that reverses, shuffles, or sorts the snapshot would still pass
+      // the "items got sent" assertions. This test pins the contract:
+      // first-in, first-out across the entire snapshot.
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+
+      await channel.sendMessage('slack:C0123456789', 'msg-1-oldest');
+      await channel.sendMessage('slack:C0123456789', 'msg-2');
+      await channel.sendMessage('slack:C0123456789', 'msg-3');
+      await channel.sendMessage('slack:C0123456789', 'msg-4-newest');
+
+      await channel.connect();
+
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      // Extract the text from each post in invocation order. Slack's mock
+      // records calls in the order they happen, so this is the on-the-wire
+      // order users would see in the channel.
+      const sentTexts = postMock.mock.calls
+        .map((c: unknown[]) => (c[0] as { text: string }).text)
+        // The connect() flow may include other unrelated posts; filter to
+        // only the queued messages we care about.
+        .filter((t: string) => t.startsWith('msg-'));
+      expect(sentTexts).toEqual([
+        'msg-1-oldest',
+        'msg-2',
+        'msg-3',
+        'msg-4-newest',
+      ]);
+    });
+
     it('flush snapshot prevents infinite re-flush loop on persistent failure', async () => {
       // The snapshot pattern is the third leg of the resilience fix: if
       // sendMessage's catch path re-queues an item during flush, the
