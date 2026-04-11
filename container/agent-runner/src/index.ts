@@ -189,6 +189,7 @@ function log(message: string): void {
 }
 
 const IPC_COST_FILE = '/workspace/ipc/cost.json';
+const IPC_DIAG_DIR = '/workspace/ipc';
 
 /**
  * Write accumulated cost to IPC file so the host can recover cost data
@@ -210,6 +211,49 @@ function writeCostToIpc(costUsd: number, usage: TokenUsage): void {
     fs.renameSync(tmpFile, IPC_COST_FILE);
   } catch {
     // Best-effort — IPC dir may not exist in tests
+  }
+}
+
+/**
+ * Write a diagnostic dump to /workspace/ipc/ when the zero-token fallback
+ * branch fires (computedCost===0 && sdkCost>0). This is the load-bearing
+ * isMain dispatch symptom: the SDK populates `total_cost_usd` but neither
+ * `result.usage` NOR `result.modelUsage`, so the agent-runner falls back
+ * to logging cost without per-token visibility.
+ *
+ * The existing `log()` call writes the same payload to stderr, but
+ * NanoClaw's container-runner.ts only persists stderr in per-container log
+ * files when LOG_LEVEL=debug OR when the container exits with non-zero
+ * code. Successful dispatch runs (the common case) drop stderr entirely.
+ *
+ * This file write bypasses that policy. Filename includes a sanitized
+ * timestamp so multiple dispatch runs accumulate evidence rather than
+ * overwriting each other. The host reads them via SSH:
+ *
+ *   ls ~/nanoclaw/data/ipc/slack_dispatch/diag-zero-tokens-*.json
+ *
+ * Best-effort: never blocks or throws into the cost reporting path.
+ */
+function writeDiagZeroTokensToFile(diagData: {
+  timestamp: string;
+  sessionId: string | null;
+  sdkCost: number;
+  resultUsage: unknown;
+  modelUsage: unknown;
+  accumulatedUsage: TokenUsage;
+  detectedModel: string | undefined;
+}): void {
+  try {
+    // Sanitize the ISO timestamp into a filesystem-safe slug.
+    const safeTimestamp = diagData.timestamp.replace(/[:.]/g, '-');
+    const file = path.join(
+      IPC_DIAG_DIR,
+      `diag-zero-tokens-${safeTimestamp}.json`,
+    );
+    fs.writeFileSync(file, JSON.stringify(diagData, null, 2));
+  } catch (err) {
+    // Best-effort — never block normal cost reporting on diag failure.
+    log(`DIAG file write failed: ${err}`);
   }
 }
 
@@ -617,7 +661,16 @@ async function runQuery(
       // but sdkCost>0, meaning the SDK populated total_cost_usd but neither
       // result.usage NOR result.modelUsage. Dump the raw shapes so a future
       // session can root-cause why isMain runs lose per-token visibility.
+      //
+      // We log() to stderr AND writeDiagZeroTokensToFile() because NanoClaw's
+      // container-runner.ts only persists stderr in per-container log files
+      // when LOG_LEVEL=debug OR when the container exits with non-zero code.
+      // Successful dispatch runs (the common case) drop stderr entirely, so
+      // the stderr line alone never reaches an operator. The file write
+      // bypasses that policy and accumulates one timestamped JSON per
+      // dispatch run that hits the condition.
       if (computedCost === 0 && sdkCost > 0) {
+        const diagTimestamp = new Date().toISOString();
         log(
           `DIAG: zero-token fallback fired — sdkCost=$${sdkCost.toFixed(4)}, ` +
             `resultUsage=${JSON.stringify(resultUsage ?? null)}, ` +
@@ -625,6 +678,15 @@ async function runQuery(
             `accumulatedUsage=${JSON.stringify(accumulatedUsage)}, ` +
             `detectedModel=${detectedModel ?? 'unknown'}`,
         );
+        writeDiagZeroTokensToFile({
+          timestamp: diagTimestamp,
+          sessionId: newSessionId ?? null,
+          sdkCost,
+          resultUsage: resultUsage ?? null,
+          modelUsage: modelUsage ?? null,
+          accumulatedUsage,
+          detectedModel,
+        });
       }
       writeOutput({
         status: 'success',
