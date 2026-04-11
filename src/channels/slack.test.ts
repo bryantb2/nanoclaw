@@ -24,6 +24,7 @@ vi.mock('../logger.js', () => ({
 // Mock db
 vi.mock('../db.js', () => ({
   updateChatName: vi.fn(),
+  isIpcInjectedMessage: vi.fn(() => false),
   getInFlightTasksList: vi.fn(() => []),
   getAllTasks: vi.fn(() => []),
 }));
@@ -93,7 +94,12 @@ vi.mock('../env.js', () => ({
 }));
 
 import { SlackChannel, SlackChannelOpts } from './slack.js';
-import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
+import {
+  updateChatName,
+  isIpcInjectedMessage,
+  getInFlightTasksList,
+  getAllTasks,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 
 // --- Test helpers ---
@@ -210,6 +216,11 @@ describe('SlackChannel', () => {
   // --- Message handling ---
 
   describe('message handling', () => {
+    beforeEach(() => {
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReset();
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    });
+
     it('delivers message for registered channel', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
@@ -233,6 +244,7 @@ describe('SlackChannel', () => {
           sender: 'U_USER_456',
           content: 'Hello everyone',
           is_from_me: false,
+          origin: 'webhook',
         }),
       );
     });
@@ -491,6 +503,103 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalled();
+    });
+  });
+
+  // --- Option B race guard (moved from index.ts onMessage) ---
+  // When IPC routing injects a row at (msg.ts, jid) with origin='ipc' and
+  // Slack echoes the bot's own post back via the webhook, re-ingesting the
+  // echo would clobber the injected row with is_bot_message=1. The Slack
+  // adapter checks isIpcInjectedMessage before calling onMessage so the
+  // race is handled at the source of bot echoes, not in every channel's
+  // generic onMessage path.
+
+  describe('IPC injection webhook echo guard', () => {
+    beforeEach(() => {
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReset();
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    });
+
+    it('skips onMessage for bot echo when IPC row already owns the id', async () => {
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect(); // sets botUserId
+
+      // Bot echo: user is the bot's own id
+      const event = createMessageEvent({
+        text: 'bot output echoed back',
+        user: 'U_BOT_123',
+        ts: '1775866368.000529',
+      });
+      await triggerMessageEvent(event);
+
+      expect(isIpcInjectedMessage).toHaveBeenCalledWith(
+        '1775866368.000529',
+        'slack:C0123456789',
+      );
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers bot echo normally when no IPC row owns the id', async () => {
+      (isIpcInjectedMessage as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'bot output (not IPC-owned)',
+        user: 'U_BOT_123',
+        ts: '1775866400.111111',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          id: '1775866400.111111',
+          is_bot_message: true,
+          origin: 'webhook',
+        }),
+      );
+    });
+
+    it('never queries isIpcInjectedMessage for user messages (optimization)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'regular user message',
+        user: 'U_USER_456', // not the bot
+        ts: '1775866500.222222',
+      });
+      await triggerMessageEvent(event);
+
+      expect(isIpcInjectedMessage).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalled();
+    });
+
+    it('delivers bot message with origin=webhook', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'bot output',
+        user: 'U_BOT_123',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          origin: 'webhook',
+          is_bot_message: true,
+        }),
+      );
     });
   });
 

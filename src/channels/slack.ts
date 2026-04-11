@@ -4,7 +4,12 @@ import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 import { execSync } from 'child_process';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
+import {
+  updateChatName,
+  isIpcInjectedMessage,
+  getInFlightTasksList,
+  getAllTasks,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -255,6 +260,23 @@ export class SlackChannel implements Channel {
 
       const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
+      // Option B race guard: Slack echoes the bot's own messages back via
+      // this webhook. When IPC routing already injected a row at (msg.ts,
+      // jid) with origin='ipc', re-ingesting the echo as a bot message
+      // would INSERT OR REPLACE the IPC row with is_bot_message=1 — which
+      // getNewMessages filters out, silently dropping the dispatched
+      // trigger. The guard lives here (in the Slack adapter) instead of
+      // in the channel-agnostic onMessage callback because the race is
+      // 100% a Slack Events API quirk; Telegram/Discord/etc. have no
+      // such echo behavior.
+      if (isBotMessage && isIpcInjectedMessage(msg.ts, jid)) {
+        logger.debug(
+          { jid, ts: msg.ts },
+          'Slack bot echo skipped: row already owned by IPC injection',
+        );
+        return;
+      }
+
       let senderName: string;
       if (isBotMessage) {
         senderName = ASSISTANT_NAME;
@@ -288,6 +310,7 @@ export class SlackChannel implements Channel {
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
+        origin: 'webhook',
       });
     });
 

@@ -957,7 +957,7 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
     storeChatMetadata('slack:qa-sentinel', '2026-04-10T00:00:00.000Z');
   });
 
-  it('returns true for a row written by the IPC injection path', () => {
+  it('returns true for a row written by the IPC injection path (origin=ipc)', () => {
     storeMessage({
       id: '1775796300.543699',
       chat_jid: 'slack:dev-team',
@@ -967,13 +967,14 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
       timestamp: '2026-04-10T07:00:00.000Z',
       is_from_me: true,
       is_bot_message: false,
+      origin: 'ipc',
     });
     expect(isIpcInjectedMessage('1775796300.543699', 'slack:dev-team')).toBe(
       true,
     );
   });
 
-  it('returns false for a non-ipc row (regular bot/user message)', () => {
+  it('returns false for a webhook-origin row (regular bot/user message)', () => {
     storeMessage({
       id: '1775796400.000001',
       chat_jid: 'slack:dev-team',
@@ -983,10 +984,33 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
       timestamp: '2026-04-10T07:01:00.000Z',
       is_from_me: true,
       is_bot_message: true,
+      origin: 'webhook',
     });
     expect(isIpcInjectedMessage('1775796400.000001', 'slack:dev-team')).toBe(
       false,
     );
+  });
+
+  it('returns false for a synthetic-origin row (ipc- fallback id)', () => {
+    // Synthetic rows shouldn't block webhook echo ingest — their ids are
+    // fabricated and Slack can never return them as a ts.
+    storeMessage({
+      id: 'ipc-2026-04-10T07:02:00.000Z-abc123',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: 'synthetic fallback',
+      timestamp: '2026-04-10T07:02:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+      origin: 'synthetic',
+    });
+    expect(
+      isIpcInjectedMessage(
+        'ipc-2026-04-10T07:02:00.000Z-abc123',
+        'slack:dev-team',
+      ),
+    ).toBe(false);
   });
 
   it('returns false when no row exists', () => {
@@ -1005,8 +1029,29 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
       timestamp: '2026-04-10T07:02:00.000Z',
       is_from_me: true,
       is_bot_message: false,
+      origin: 'ipc',
     });
     expect(isIpcInjectedMessage('1775796500.000001', 'slack:qa-sentinel')).toBe(
+      false,
+    );
+  });
+
+  it('defaults origin to "webhook" when storeMessage is called without explicit origin', () => {
+    // Regression guard: a legacy caller that hasn't been updated to pass
+    // origin must not accidentally register as an IPC injection. The
+    // default origin='webhook' in storeMessage prevents this.
+    storeMessage({
+      id: '1775796600.000001',
+      chat_jid: 'slack:dev-team',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: 'legacy caller (no origin field)',
+      timestamp: '2026-04-10T07:03:00.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+      // no origin field — should default to 'webhook'
+    });
+    expect(isIpcInjectedMessage('1775796600.000001', 'slack:dev-team')).toBe(
       false,
     );
   });

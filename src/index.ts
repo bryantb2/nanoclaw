@@ -39,7 +39,6 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
-  isIpcInjectedMessage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -52,7 +51,6 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import {
   injectIpcMessage,
   resolveOutboundThreadOpts,
-  shouldDropBotEchoForIpcInjection,
 } from './ipc-inject.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -797,14 +795,11 @@ async function main(): Promise<void> {
           logger.debug({ err }, 'Failed to add eyes reaction'),
         );
       }
-      // Option B race guard: the Slack webhook echoes bot messages back with
-      // the real ts as id. When IPC routing already injected a row at that
-      // (id, chat_jid) with sender='ipc' and is_bot_message=0, replacing it
-      // with the echo (is_bot_message=1) would make the trigger invisible to
-      // getNewMessages and silently drop the dispatched task.
-      if (shouldDropBotEchoForIpcInjection(msg, isIpcInjectedMessage)) {
-        return;
-      }
+      // NOTE: the Option B webhook-echo race guard used to live here. It
+      // moved into src/channels/slack.ts where the bot echoes actually
+      // originate — the race is Slack-specific and other channels
+      // shouldn't pay the DB lookup cost. See the setupEventHandlers
+      // guard in slack.ts for the current implementation.
       storeMessage(msg);
     },
     onChatMetadata: (

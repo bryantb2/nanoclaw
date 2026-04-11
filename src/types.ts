@@ -51,6 +51,19 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  /**
+   * Row provenance — classifies how this message arrived in the DB.
+   * - `'webhook'`   — inbound from a Slack/Telegram webhook (bot echoes,
+   *   user messages, channel activity)
+   * - `'ipc'`       — injected by IPC routing with a real platform ts as
+   *   id (Option B threading, PR #31)
+   * - `'synthetic'` — injected by IPC routing with a synthetic `ipc-` id
+   *   because the channel had no usable ts to anchor on
+   *
+   * Replaces the fragile id-prefix string check the IPC layer relied on.
+   * Defaults to 'webhook' in `storeMessage` when omitted.
+   */
+  origin?: 'webhook' | 'ipc' | 'synthetic';
 }
 
 export interface ScheduledTask {

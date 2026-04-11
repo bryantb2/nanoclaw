@@ -42,6 +42,11 @@ export function buildInjectedMessage(args: {
   rand: string;
 }): NewMessage {
   const content = translateMentionToTrigger(args.text);
+  // Origin is determined by whether sendMessage returned a usable ts:
+  //   - real ts present → 'ipc' (Option B threading works for this row)
+  //   - ts absent       → 'synthetic' (Option A fallback — filtered by
+  //                       thread anchor selection so reply posts to channel)
+  const origin: 'ipc' | 'synthetic' = args.realTs ? 'ipc' : 'synthetic';
   const id = args.realTs ?? `ipc-${args.now}-${args.rand}`;
   return {
     id,
@@ -55,6 +60,7 @@ export function buildInjectedMessage(args: {
     // includes this row (its WHERE clause excludes bot messages).
     is_from_me: true,
     is_bot_message: false,
+    origin,
   };
 }
 

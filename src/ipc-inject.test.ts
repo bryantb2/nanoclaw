@@ -67,6 +67,7 @@ describe('buildInjectedMessage', () => {
     expect(row.sender_name).toBe('ipc:slack_dispatch');
     expect(row.is_from_me).toBe(true);
     expect(row.is_bot_message).toBe(false);
+    expect(row.origin).toBe('ipc');
   });
 
   it('falls back to a synthetic ipc- id when realTs is undefined', () => {
@@ -79,6 +80,7 @@ describe('buildInjectedMessage', () => {
       rand: 'abc123',
     });
     expect(row.id).toBe('ipc-2026-04-10T12:00:00.000Z-abc123');
+    expect(row.origin).toBe('synthetic');
   });
 
   it('translates raw <@UID> mentions before storing', () => {
