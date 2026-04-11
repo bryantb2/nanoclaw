@@ -746,47 +746,26 @@ describe('timestamp format affects getNewMessages visibility', () => {
 // Telegram sendMessage always returns undefined per the Channel interface
 // contract — Telegram message_ids are not usable as Slack-style thread_ts
 // anchors. When dispatch routes an IPC message to a Telegram-backed group,
-// injectMessage must fall back to a synthetic ipc- id. A regression that
-// broke this fallback (e.g. changed undefined to null, or added a check
-// that crashed on undefined) would slip through otherwise.
+// injectMessage must fall back to a synthetic ipc- id.
 //
-// Pinning this behavior lets us expand IPC routing to Telegram safely
-// when the time comes.
+// processMessageIpc itself is platform-agnostic (no JID-prefix branching),
+// so the lower-level "forwards undefined ts" and "rejects cross-group
+// routing" cases are already covered against `slack:dev-team` targets
+// earlier in this file. The single test below adds the only new fault
+// detection a Telegram fixture buys us: an end-to-end integration through
+// the REAL injectIpcMessage helper, which proves undefined realTs survives
+// processMessageIpc → injectMessage → buildInjectedMessage → storeMessage
+// → getNewMessages and lands as a synthetic ipc- id row.
 
 describe('processMessageIpc — Telegram dispatch fallback', () => {
-  it('forwards undefined ts from Telegram sendMessage to injectMessage', async () => {
-    // Telegram's sendMessage returns undefined by contract (see
-    // src/channels/telegram.ts — no Slack-thread_ts equivalent).
-    const sendMessage = vi.fn().mockResolvedValue(undefined);
-    const injectMessage = vi.fn();
-
-    const result = await processMessageIpc(
-      {
-        type: 'message',
-        chatJid: 'tg:12345',
-        text: '@Fleet [DISPATCH-ROUTED] Telegram task',
-      },
-      'slack_dispatch',
-      true, // isMain
-      groups,
-      { sendMessage, injectMessage },
-    );
-
-    expect(result).toBe('sent');
-    expect(sendMessage).toHaveBeenCalledOnce();
-    // Key assertion: undefined flows through explicitly so injectIpcMessage
-    // knows to use the synthetic fallback id.
-    expect(injectMessage).toHaveBeenCalledWith(
-      'tg:12345',
-      '@Fleet [DISPATCH-ROUTED] Telegram task',
-      'ipc:slack_dispatch',
-      undefined,
-    );
-  });
-
   it('injectIpcMessage integration: Telegram path stores a synthetic ipc- id', async () => {
     // Wire processMessageIpc through the REAL injectIpcMessage helper (not
     // a mock) so we verify end-to-end that undefined → synthetic id → DB.
+    // This is the only test that exercises the full dispatch → inject →
+    // persist → read pipeline; the lower-level pieces (processMessageIpc
+    // forwarding undefined, buildInjectedMessage building synthetic ids,
+    // storeMessage writing the row) are each covered in isolation
+    // elsewhere — this catches breakage at the seams between them.
     const { injectIpcMessage } = await import('./ipc-inject.js');
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const enqueueCalls: string[] = [];
@@ -831,29 +810,5 @@ describe('processMessageIpc — Telegram dispatch fallback', () => {
     expect(messages[0].id).toBe('ipc-2026-04-11T00:00:00.000Z-tg0001');
     expect(messages[0].sender).toBe('ipc');
     expect(messages[0].content).toBe('@Fleet work');
-  });
-
-  it('rejects cross-group routing from non-main group to Telegram target', async () => {
-    // Authorization check: a non-main source group can only send to its
-    // own channel. A non-main Slack group trying to route to a Telegram
-    // group must be blocked regardless of the Telegram fallback logic.
-    const sendMessage = vi.fn();
-    const injectMessage = vi.fn();
-
-    const result = await processMessageIpc(
-      {
-        type: 'message',
-        chatJid: 'tg:12345',
-        text: 'unauthorized cross-channel',
-      },
-      'slack_other',
-      false,
-      groups,
-      { sendMessage, injectMessage },
-    );
-
-    expect(result).toBe('unauthorized');
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(injectMessage).not.toHaveBeenCalled();
   });
 });
