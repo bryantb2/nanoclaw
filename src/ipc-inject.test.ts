@@ -12,10 +12,8 @@ import {
   buildInjectedMessage,
   injectIpcMessage,
   resolveOutboundThreadOpts,
-  shouldDropBotEchoForIpcInjection,
   translateMentionToTrigger,
 } from './ipc-inject.js';
-import { NewMessage } from './types.js';
 
 // --- translateMentionToTrigger ---
 
@@ -67,6 +65,7 @@ describe('buildInjectedMessage', () => {
     expect(row.sender_name).toBe('ipc:slack_dispatch');
     expect(row.is_from_me).toBe(true);
     expect(row.is_bot_message).toBe(false);
+    expect(row.origin).toBe('ipc');
   });
 
   it('falls back to a synthetic ipc- id when realTs is undefined', () => {
@@ -79,6 +78,7 @@ describe('buildInjectedMessage', () => {
       rand: 'abc123',
     });
     expect(row.id).toBe('ipc-2026-04-10T12:00:00.000Z-abc123');
+    expect(row.origin).toBe('synthetic');
   });
 
   it('translates raw <@UID> mentions before storing', () => {
@@ -218,59 +218,6 @@ describe('injectIpcMessage', () => {
     expect(row.id).toMatch(
       /^ipc-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z-[a-z0-9]{6}$/,
     );
-  });
-});
-
-// --- shouldDropBotEchoForIpcInjection ---
-
-describe('shouldDropBotEchoForIpcInjection', () => {
-  function makeMsg(overrides: Partial<NewMessage>): NewMessage {
-    return {
-      id: '1775796300.543699',
-      chat_jid: 'slack:dev-team',
-      sender: 'U0BOT123',
-      sender_name: 'Fleet',
-      content: 'output',
-      timestamp: '2026-04-10T12:00:00.000Z',
-      is_from_me: true,
-      is_bot_message: true,
-      ...overrides,
-    };
-  }
-
-  it('drops bot echo when isIpcInjected returns true', () => {
-    const isIpcInjected = vi.fn(() => true);
-    expect(
-      shouldDropBotEchoForIpcInjection(
-        makeMsg({ is_bot_message: true }),
-        isIpcInjected,
-      ),
-    ).toBe(true);
-    expect(isIpcInjected).toHaveBeenCalledWith(
-      '1775796300.543699',
-      'slack:dev-team',
-    );
-  });
-
-  it('keeps bot echo when isIpcInjected returns false', () => {
-    expect(
-      shouldDropBotEchoForIpcInjection(
-        makeMsg({ is_bot_message: true }),
-        () => false,
-      ),
-    ).toBe(false);
-  });
-
-  it('keeps user message regardless of isIpcInjected (never queries it)', () => {
-    const isIpcInjected = vi.fn(() => true);
-    expect(
-      shouldDropBotEchoForIpcInjection(
-        makeMsg({ is_bot_message: false }),
-        isIpcInjected,
-      ),
-    ).toBe(false);
-    // Optimization: don't query the DB for user messages
-    expect(isIpcInjected).not.toHaveBeenCalled();
   });
 });
 

@@ -7,6 +7,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR, TIMEZONE } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  MessageOrigin,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -33,6 +34,7 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      origin TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -121,6 +123,45 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add origin column to messages. Classifies each row as:
+  //   'webhook'   — inbound user/bot message from a Slack/Telegram webhook
+  //   'ipc'       — injected by IPC routing with a real platform ts as id
+  //                 (Option B, PR #31)
+  //   'synthetic' — injected by IPC routing with a synthetic ipc- id
+  //                 (fallback when the channel had no usable ts)
+  //
+  // Pre-Option-B rows used sender='ipc' with id LIKE 'ipc-%' — those are
+  // backfilled to 'synthetic'. Rows with sender='ipc' but a real ts id are
+  // the post-Option-B injections (no such rows existed before PR #31).
+  // Everything else came from a webhook.
+  //
+  // The origin column replaces the fragile id-prefix string check that
+  // isValidThreadTs and isIpcInjectedMessage relied on.
+  //
+  // The ALTER is wrapped in its own try/catch so "column already exists" is
+  // silently tolerated (fresh-schema path + re-run idempotency). Backfill
+  // UPDATEs run UNGUARDED so any real failure surfaces in journalctl instead
+  // of leaving rows with origin IS NULL — which would silently break the
+  // webhook echo race guard (PR #36) for pre-migration Option B rows.
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN origin TEXT`);
+  } catch {
+    /* column already exists — backfill below is still safe + idempotent */
+  }
+  // Backfill in priority order so each row gets exactly one classification.
+  // All three UPDATEs are idempotent (the `origin IS NULL` guard makes
+  // re-runs no-ops) so running them on every startup is safe and cheap.
+  // 1. Synthetic IPC rows (id starts with 'ipc-')
+  database.exec(
+    `UPDATE messages SET origin = 'synthetic' WHERE origin IS NULL AND id LIKE 'ipc-%'`,
+  );
+  // 2. Real-ts IPC injections (sender='ipc' but id is a real ts)
+  database.exec(
+    `UPDATE messages SET origin = 'ipc' WHERE origin IS NULL AND sender = 'ipc'`,
+  );
+  // 3. Everything else came from a webhook
+  database.exec(`UPDATE messages SET origin = 'webhook' WHERE origin IS NULL`);
 
   // Add max_budget_usd column to scheduled_tasks if it doesn't exist
   try {
@@ -245,6 +286,15 @@ export function _initFileDatabaseForTest(dbPath: string): void {
 }
 
 /**
+ * @internal - for tests only. Re-runs createSchema (CREATE IF NOT EXISTS +
+ * idempotent migrations + backfill UPDATEs) against the current DB so a test
+ * can simulate the "restart against a pre-migration prod DB" scenario.
+ */
+export function _runMigrationsForTest(): void {
+  createSchema(db);
+}
+
+/**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
  */
@@ -343,19 +393,23 @@ export function setLastGroupSync(): void {
 }
 
 /**
- * Returns true if a row at (id, chat_jid) already exists with sender='ipc'
- * — i.e. the row was written by the IPC injection path (Option B uses the
- * real Slack ts as the row id).
+ * Returns true if a row at (id, chat_jid) already exists with origin='ipc'
+ * — i.e. the row was written by the IPC injection path with a real
+ * platform ts as id (Option B, PR #31).
  *
  * Used by the Slack webhook echo handler to skip re-ingesting the bot's own
  * message when IPC already stored it. Without this guard, the echo would
  * `INSERT OR REPLACE` the injected row with `is_bot_message=1` — which
  * `getNewMessages` filters out, silently dropping the dispatched trigger.
+ *
+ * Note: origin='synthetic' rows (ipc-{iso}-{rand} id) are NOT considered
+ * IPC-injected for this check. Synthetic rows have a fabricated id that
+ * Slack will never echo back, so there's no collision to guard against.
  */
 export function isIpcInjectedMessage(id: string, chatJid: string): boolean {
   const row = db
     .prepare(
-      `SELECT 1 FROM messages WHERE id = ? AND chat_jid = ? AND sender = 'ipc' LIMIT 1`,
+      `SELECT 1 FROM messages WHERE id = ? AND chat_jid = ? AND origin = 'ipc' LIMIT 1`,
     )
     .get(id, chatJid);
   return row !== undefined;
@@ -364,10 +418,14 @@ export function isIpcInjectedMessage(id: string, chatJid: string): boolean {
 /**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
+ *
+ * `origin` defaults to 'webhook' when not supplied — that's the right
+ * default for Slack/Telegram inbound messages which compose the bulk of
+ * callers. IPC injection paths explicitly pass 'ipc' or 'synthetic'.
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -377,6 +435,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.origin ?? 'webhook',
   );
 }
 
@@ -410,9 +469,10 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
+  origin?: MessageOrigin;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -422,6 +482,7 @@ export function storeMessageDirect(msg: {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.origin ?? 'webhook',
   );
 }
 

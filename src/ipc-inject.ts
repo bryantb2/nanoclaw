@@ -7,7 +7,7 @@
  */
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
-import { NewMessage } from './types.js';
+import { MessageOrigin, NewMessage } from './types.js';
 
 /**
  * Translate a Slack `<@UID>` mention to the `@Fleet` trigger format if the
@@ -42,6 +42,11 @@ export function buildInjectedMessage(args: {
   rand: string;
 }): NewMessage {
   const content = translateMentionToTrigger(args.text);
+  // Origin is determined by whether sendMessage returned a usable ts:
+  //   - real ts present → 'ipc' (Option B threading works for this row)
+  //   - ts absent       → 'synthetic' (Option A fallback — filtered by
+  //                       thread anchor selection so reply posts to channel)
+  const origin: MessageOrigin = args.realTs ? 'ipc' : 'synthetic';
   const id = args.realTs ?? `ipc-${args.now}-${args.rand}`;
   return {
     id,
@@ -55,6 +60,7 @@ export function buildInjectedMessage(args: {
     // includes this row (its WHERE clause excludes bot messages).
     is_from_me: true,
     is_bot_message: false,
+    origin,
   };
 }
 
@@ -91,24 +97,6 @@ export function injectIpcMessage(
   });
   deps.storeMessage(row);
   deps.enqueueMessageCheck(chatJid);
-}
-
-/**
- * Returns true when an inbound bot-echo message should be dropped because
- * an IPC injection already owns its (id, chat_jid) row. Without this guard,
- * Slack's webhook would clobber the injected row's `is_bot_message=0` with
- * `is_bot_message=1`, making the dispatched trigger invisible to
- * `getNewMessages` and silently dropping the routed task.
- *
- * The check only fires for bot messages — user messages are never echoes
- * of an IPC injection.
- */
-export function shouldDropBotEchoForIpcInjection(
-  msg: Pick<NewMessage, 'id' | 'chat_jid' | 'is_bot_message'>,
-  isIpcInjected: (id: string, chatJid: string) => boolean,
-): boolean {
-  if (!msg.is_bot_message) return false;
-  return isIpcInjected(msg.id, msg.chat_jid);
 }
 
 /**
