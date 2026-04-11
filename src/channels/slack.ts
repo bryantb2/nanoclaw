@@ -4,7 +4,12 @@ import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 import { execSync } from 'child_process';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
+import {
+  updateChatName,
+  updateMessageContent,
+  getInFlightTasksList,
+  getAllTasks,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -193,7 +198,15 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
-  private outgoingQueue: Array<{ jid: string; text: string }> = [];
+  // outgoingQueue persists threadTs so that queued messages retain their
+  // reply anchor when flushed on reconnect. Without this, any threaded
+  // message that hits a transient failure would flush back to the main
+  // channel after retry.
+  private outgoingQueue: Array<{
+    jid: string;
+    text: string;
+    threadTs?: string;
+  }> = [];
   private flushing = false;
   private userNameCache = new Map<string, string>();
 
@@ -231,6 +244,38 @@ export class SlackChannel implements Channel {
       // Bolt's event type is the full MessageEvent union (17+ subtypes).
       // We filter on subtype first, then narrow to the two types we handle.
       const subtype = (event as { subtype?: string }).subtype;
+
+      // Handle message edits: when a user or bot edits a message, Slack
+      // delivers a `message_changed` subtype with the updated message
+      // embedded. Update the DB row in place so agents reading history
+      // see the current content, not the stale version. The edited
+      // message keeps its original ts, so we update by (ts, chat_jid).
+      if (subtype === 'message_changed') {
+        const changed = event as unknown as {
+          channel: string;
+          message?: { ts?: string; text?: string };
+        };
+        const updated = changed.message;
+        if (updated?.ts && typeof updated.text === 'string') {
+          const jid = `slack:${changed.channel}`;
+          const groups = this.opts.registeredGroups();
+          // Only bother updating for registered groups — we don't store
+          // messages from other channels in the first place.
+          if (groups[jid]) {
+            const changedRows = updateMessageContent(
+              updated.ts,
+              jid,
+              updated.text,
+            );
+            logger.debug(
+              { jid, ts: updated.ts, changedRows },
+              'Slack message_changed: updated DB row',
+            );
+          }
+        }
+        return;
+      }
+
       if (subtype && subtype !== 'bot_message') return;
 
       // After filtering, event is either GenericMessageEvent or BotMessageEvent
@@ -428,7 +473,7 @@ export class SlackChannel implements Channel {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
-      this.outgoingQueue.push({ jid, text });
+      this.outgoingQueue.push({ jid, text, threadTs: opts?.threadTs });
       logger.info(
         { jid, queueSize: this.outgoingQueue.length },
         'Slack disconnected, message queued',
@@ -436,6 +481,10 @@ export class SlackChannel implements Channel {
       return undefined;
     }
 
+    // Track how many characters have been successfully posted. On a
+    // partial-fail during the split-message loop, only the unsent tail is
+    // re-queued — preventing duplicate posts of chunks that already landed.
+    let sentChars = 0;
     try {
       // Slack limits messages to ~4000 characters; split if needed.
       // When splitting, return the FIRST chunk's ts — subsequent replies
@@ -464,10 +513,13 @@ export class SlackChannel implements Channel {
       };
       if (text.length <= MAX_MESSAGE_LENGTH) {
         firstTs = await post(text);
+        sentChars = text.length;
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          const ts = await post(text.slice(i, i + MAX_MESSAGE_LENGTH));
+          const chunkEnd = Math.min(i + MAX_MESSAGE_LENGTH, text.length);
+          const ts = await post(text.slice(i, chunkEnd));
           if (firstTs === undefined) firstTs = ts;
+          sentChars = chunkEnd;
         }
       }
       logger.info(
@@ -476,10 +528,25 @@ export class SlackChannel implements Channel {
       );
       return firstTs;
     } catch (err) {
-      this.outgoingQueue.push({ jid, text });
+      // Only queue the UNSENT tail. If chunks 1..N-1 already landed in
+      // Slack, retrying the full text on flush would double-post them.
+      const unsent = sentChars < text.length ? text.slice(sentChars) : '';
+      if (unsent.length > 0) {
+        this.outgoingQueue.push({
+          jid,
+          text: unsent,
+          threadTs: opts?.threadTs,
+        });
+      }
       logger.warn(
-        { jid, err, queueSize: this.outgoingQueue.length },
-        'Failed to send Slack message, queued',
+        {
+          jid,
+          err,
+          queueSize: this.outgoingQueue.length,
+          sentChars,
+          unsentChars: unsent.length,
+        },
+        'Failed to send Slack message, queued unsent portion',
       );
       return undefined;
     }
@@ -580,12 +647,15 @@ export class SlackChannel implements Channel {
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
         const channelId = item.jid.replace(/^slack:/, '');
+        // Preserve the original threadTs so flushed messages still thread
+        // under their intended anchor (fix: queue previously dropped it).
         await this.app.client.chat.postMessage({
           channel: channelId,
           text: markdownToSlackMrkdwn(item.text),
+          ...(item.threadTs ? { thread_ts: item.threadTs } : {}),
         });
         logger.info(
-          { jid: item.jid, length: item.text.length },
+          { jid: item.jid, length: item.text.length, threadTs: item.threadTs },
           'Queued Slack message sent',
         );
       }

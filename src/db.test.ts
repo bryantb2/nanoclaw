@@ -21,6 +21,7 @@ import {
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
+  updateMessageContent,
   updateTask,
 } from './db.js';
 
@@ -1009,5 +1010,81 @@ describe('isIpcInjectedMessage (Option B webhook echo guard)', () => {
     expect(isIpcInjectedMessage('1775796500.000001', 'slack:qa-sentinel')).toBe(
       false,
     );
+  });
+});
+
+describe('updateMessageContent (Slack message_changed handler)', () => {
+  beforeEach(() => {
+    storeChatMetadata('slack:dev-team', '2026-04-10T00:00:00.000Z');
+    storeMessage({
+      id: '1700000000.000099',
+      chat_jid: 'slack:dev-team',
+      sender: 'U_USER',
+      sender_name: 'Alice',
+      content: 'original content',
+      timestamp: '2026-04-11T00:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+  });
+
+  it('updates content of a matching row and returns 1', () => {
+    const changed = updateMessageContent(
+      '1700000000.000099',
+      'slack:dev-team',
+      'edited content',
+    );
+    expect(changed).toBe(1);
+
+    const { messages } = getNewMessages(
+      ['slack:dev-team'],
+      '2026-04-10T23:00:00.000Z',
+      'Fleet',
+    );
+    const row = messages.find((m) => m.id === '1700000000.000099');
+    expect(row?.content).toBe('edited content');
+  });
+
+  it('returns 0 when no row matches (edit for un-ingested message)', () => {
+    const changed = updateMessageContent(
+      'nonexistent.ts',
+      'slack:dev-team',
+      'edited',
+    );
+    expect(changed).toBe(0);
+  });
+
+  it('returns 0 when id matches but chat_jid differs', () => {
+    storeChatMetadata('slack:qa-sentinel', '2026-04-10T00:00:00.000Z');
+    const changed = updateMessageContent(
+      '1700000000.000099',
+      'slack:qa-sentinel',
+      'edited',
+    );
+    expect(changed).toBe(0);
+  });
+
+  it('preserves other columns (sender, timestamp, is_from_me, is_bot_message)', () => {
+    updateMessageContent(
+      '1700000000.000099',
+      'slack:dev-team',
+      'edited content',
+    );
+    const row = _getDb()
+      .prepare(
+        `SELECT sender, sender_name, timestamp, is_from_me, is_bot_message FROM messages WHERE id = ? AND chat_jid = ?`,
+      )
+      .get('1700000000.000099', 'slack:dev-team') as {
+      sender: string;
+      sender_name: string;
+      timestamp: string;
+      is_from_me: number;
+      is_bot_message: number;
+    };
+    expect(row.sender).toBe('U_USER');
+    expect(row.sender_name).toBe('Alice');
+    expect(row.timestamp).toBe('2026-04-11T00:00:00.000Z');
+    expect(row.is_from_me).toBe(0);
+    expect(row.is_bot_message).toBe(0);
   });
 });

@@ -381,6 +381,26 @@ export function storeMessage(msg: NewMessage): void {
 }
 
 /**
+ * Update the `content` field of an existing message row. Used by the
+ * Slack `message_changed` event handler so the DB stays in sync with
+ * user edits in Slack. Returns the number of rows affected (0 if no
+ * matching row exists — e.g. the edit arrived for a message we never
+ * ingested).
+ */
+export function updateMessageContent(
+  id: string,
+  chatJid: string,
+  content: string,
+): number {
+  const result = db
+    .prepare(
+      `UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?`,
+    )
+    .run(content, id, chatJid);
+  return result.changes;
+}
+
+/**
  * Store a message directly.
  */
 export function storeMessageDirect(msg: {

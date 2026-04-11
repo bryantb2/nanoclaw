@@ -24,6 +24,7 @@ vi.mock('../logger.js', () => ({
 // Mock db
 vi.mock('../db.js', () => ({
   updateChatName: vi.fn(),
+  updateMessageContent: vi.fn(() => 1),
   getInFlightTasksList: vi.fn(() => []),
   getAllTasks: vi.fn(() => []),
 }));
@@ -93,7 +94,12 @@ vi.mock('../env.js', () => ({
 }));
 
 import { SlackChannel, SlackChannelOpts } from './slack.js';
-import { updateChatName, getInFlightTasksList, getAllTasks } from '../db.js';
+import {
+  updateChatName,
+  updateMessageContent,
+  getInFlightTasksList,
+  getAllTasks,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 
 // --- Test helpers ---
@@ -758,6 +764,183 @@ describe('SlackChannel', () => {
         channel: 'C0123456789',
         text: 'Second queued',
       });
+    });
+
+    it('preserves threadTs when queuing on disconnect (flush restores threading)', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+
+      // Queue with threadTs while disconnected
+      await channel.sendMessage('slack:C0123456789', 'Threaded reply', {
+        threadTs: '1700000000.000001',
+      });
+
+      expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
+
+      await channel.connect();
+
+      // Flushed message must still carry thread_ts — without this the
+      // reply would land in the main channel after a transient failure.
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'C0123456789',
+        text: 'Threaded reply',
+        thread_ts: '1700000000.000001',
+      });
+    });
+
+    it('preserves threadTs when queuing on postMessage failure', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // Make the initial post fail so the message gets queued
+      currentApp().client.chat.postMessage.mockRejectedValueOnce(
+        new Error('transient failure'),
+      );
+
+      const result = await channel.sendMessage(
+        'slack:C0123456789',
+        'Threaded update',
+        { threadTs: '1700000000.000042' },
+      );
+      expect(result).toBeUndefined();
+
+      // Subsequent flush (simulated by reconnecting after stub reset) must
+      // include thread_ts on the retried message. We just verify the queue
+      // item retained threadTs by inspecting the private field.
+      const queue = (channel as unknown as {
+        outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }>;
+      }).outgoingQueue;
+      expect(queue).toHaveLength(1);
+      expect(queue[0].threadTs).toBe('1700000000.000042');
+      expect(queue[0].text).toBe('Threaded update');
+    });
+
+    it('queues only the unsent tail when a split-message chunk fails mid-loop', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // 9000 chars → 3 chunks of 4000/4000/1000. First 2 succeed, 3rd throws.
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      postMock
+        .mockResolvedValueOnce({ ok: true, ts: '1700000000.000100' })
+        .mockResolvedValueOnce({ ok: true, ts: '1700000000.000200' })
+        .mockRejectedValueOnce(new Error('third chunk failed'));
+
+      const text = 'A'.repeat(4000) + 'B'.repeat(4000) + 'C'.repeat(1000);
+      const result = await channel.sendMessage('slack:C0123456789', text);
+      expect(result).toBeUndefined();
+
+      const queue = (channel as unknown as {
+        outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }>;
+      }).outgoingQueue;
+      // Only the unsent 3rd chunk ('C' x 1000) should be queued — NOT the
+      // full 9000-char text. Otherwise chunks 1 + 2 double-post on retry.
+      expect(queue).toHaveLength(1);
+      expect(queue[0].text).toBe('C'.repeat(1000));
+      expect(queue[0].text.length).toBe(1000);
+    });
+
+    it('does not queue anything when the entire split succeeds', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const text = 'X'.repeat(4500); // 2 chunks
+      await channel.sendMessage('slack:C0123456789', text);
+
+      const queue = (channel as unknown as {
+        outgoingQueue: unknown[];
+      }).outgoingQueue;
+      expect(queue).toHaveLength(0);
+    });
+  });
+
+  // --- message_changed event handling ---
+
+  describe('message_changed subtype', () => {
+    beforeEach(() => {
+      (updateMessageContent as ReturnType<typeof vi.fn>).mockClear();
+    });
+
+    it('updates DB row content when a message is edited in a registered channel', async () => {
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C0123456789',
+          message: {
+            ts: '1700000000.000099',
+            text: 'edited content',
+          },
+        },
+      });
+
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        '1700000000.000099',
+        'slack:C0123456789',
+        'edited content',
+      );
+    });
+
+    it('skips message_changed for unregistered channels', async () => {
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C_UNKNOWN',
+          message: { ts: '1700000000.000099', text: 'edited' },
+        },
+      });
+
+      expect(updateMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('skips message_changed when embedded message has no text', async () => {
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C0123456789',
+          message: { ts: '1700000000.000099' }, // no text field
+        },
+      });
+
+      expect(updateMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call onMessage for message_changed events (no double-storage)', async () => {
+      const onMessage = vi.fn();
+      const opts = createTestOpts({ onMessage });
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C0123456789',
+          message: { ts: '1700000000.000099', text: 'edited' },
+        },
+      });
+
+      // message_changed should ONLY update content, not trigger ingest
+      expect(onMessage).not.toHaveBeenCalled();
     });
   });
 
