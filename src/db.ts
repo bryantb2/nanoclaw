@@ -161,9 +161,7 @@ function createSchema(database: Database.Database): void {
     `UPDATE messages SET origin = 'ipc' WHERE origin IS NULL AND sender = 'ipc'`,
   );
   // 3. Everything else came from a webhook
-  database.exec(
-    `UPDATE messages SET origin = 'webhook' WHERE origin IS NULL`,
-  );
+  database.exec(`UPDATE messages SET origin = 'webhook' WHERE origin IS NULL`);
 
   // Add max_budget_usd column to scheduled_tasks if it doesn't exist
   try {
