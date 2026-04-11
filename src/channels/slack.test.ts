@@ -1017,6 +1017,125 @@ describe('SlackChannel', () => {
       ).outgoingQueue;
       expect(queue).toHaveLength(0);
     });
+
+    // --- flush resilience (Bug 1: re-split on flush, Bug 2: don't drop on throw) ---
+
+    it('re-splits queued items > MAX_MESSAGE_LENGTH during flush', async () => {
+      // Bug 1: previously the flush called chat.postMessage once per item
+      // with no re-split. Slack hard-caps individual posts at 4000 chars,
+      // so a 5000-char queued tail (which PR #33's partial-fail catch path
+      // produces routinely) would soft-fail and be silently lost. The fix
+      // routes flush items through sendMessage so they get the same
+      // re-split logic that fresh sends use.
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+
+      // Pre-queue an oversized item by sending while disconnected.
+      const oversize = 'A'.repeat(4000) + 'B'.repeat(4000) + 'C'.repeat(1000); // 9000 chars
+      await channel.sendMessage('slack:C0123456789', oversize);
+
+      // Connect → flush. The flush MUST split into 3 chunks, not call
+      // postMessage with a single 9000-char text.
+      await channel.connect();
+
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      const calls = postMock.mock.calls.map(
+        (c: unknown[]) => c[0] as { text: string },
+      );
+      // Every post must respect Slack's per-call cap.
+      for (const call of calls) {
+        expect(call.text.length).toBeLessThanOrEqual(4000);
+      }
+      // 9000 chars / 4000 per chunk = 3 chunks for THIS item. There may be
+      // additional calls if other tests share state — assert at least 3.
+      expect(calls.length).toBeGreaterThanOrEqual(3);
+      // Reassemble the chunks: first 4000 'A', next 4000 'B', last 1000 'C'.
+      const reassembled = calls
+        .slice(-3)
+        .map((c) => c.text)
+        .join('');
+      expect(reassembled).toBe(oversize);
+    });
+
+    it('continues flushing remaining items after one item throws', async () => {
+      // Bug 2: previously flush used `.shift()` BEFORE `await`, so if
+      // postMessage threw on item N, items N+1..end were silently stranded
+      // because the catch/finally exited the loop entirely. The fix
+      // catches per-item failures and continues with the rest of the
+      // snapshot.
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+
+      // Queue 3 small items while disconnected.
+      await channel.sendMessage('slack:C0123456789', 'first');
+      await channel.sendMessage('slack:C0123456789', 'second');
+      await channel.sendMessage('slack:C0123456789', 'third');
+
+      // Make item 2 fail. Item 1 succeeds. Item 3 must STILL be attempted.
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      postMock
+        .mockResolvedValueOnce({ ok: true, ts: '1700000000.000001' }) // 1
+        .mockRejectedValueOnce(new Error('item 2 failed')) // 2
+        .mockResolvedValueOnce({ ok: true, ts: '1700000000.000003' }); // 3
+
+      await channel.connect();
+
+      // All 3 items must have been attempted (1 success + 1 throw + 1
+      // success). The pre-fix behavior would have stopped after the throw.
+      const sentTexts = postMock.mock.calls.map(
+        (c: unknown[]) => (c[0] as { text: string }).text,
+      );
+      expect(sentTexts).toContain('first');
+      expect(sentTexts).toContain('third');
+
+      // Item 2 should have been re-queued by sendMessage's catch path.
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: Array<{ jid: string; text: string }>;
+        }
+      ).outgoingQueue;
+      expect(queue.find((q) => q.text === 'second')).toBeDefined();
+      expect(queue.find((q) => q.text === 'first')).toBeUndefined();
+      expect(queue.find((q) => q.text === 'third')).toBeUndefined();
+    });
+
+    it('flush snapshot prevents infinite re-flush loop on persistent failure', async () => {
+      // The snapshot pattern is the third leg of the resilience fix: if
+      // sendMessage's catch path re-queues an item during flush, the
+      // re-queued item must NOT be picked up by the SAME flush iteration
+      // (would loop forever on persistent failure). It should sit in the
+      // queue until the NEXT flush trigger.
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+
+      await channel.sendMessage('slack:C0123456789', 'persistent-fail');
+
+      // Make EVERY postMessage call reject so the item re-queues on each
+      // attempt. If the snapshot pattern is broken, this test hangs (or
+      // explodes the queue).
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      postMock.mockRejectedValue(new Error('persistent network failure'));
+
+      await channel.connect();
+
+      // Exactly ONE attempt per flush call. The item is back in the queue
+      // for the next flush trigger.
+      expect(postMock).toHaveBeenCalledTimes(1);
+
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: Array<{ jid: string; text: string }>;
+        }
+      ).outgoingQueue;
+      expect(queue).toHaveLength(1);
+      expect(queue[0].text).toBe('persistent-fail');
+    });
   });
 
   // --- message_changed event handling ---

@@ -666,24 +666,45 @@ export class SlackChannel implements Channel {
     if (this.flushing || this.outgoingQueue.length === 0) return;
     this.flushing = true;
     try {
+      // Snapshot the queue at the start of the flush. Items re-queued by
+      // sendMessage's catch path (e.g. an unsent tail from a fresh
+      // partial-fail) get picked up by the NEXT flush trigger — preventing
+      // an infinite re-flush loop within a single call when an item
+      // persistently fails.
+      const snapshot = this.outgoingQueue.splice(
+        0,
+        this.outgoingQueue.length,
+      );
       logger.info(
-        { count: this.outgoingQueue.length },
+        { count: snapshot.length },
         'Flushing Slack outgoing queue',
       );
-      while (this.outgoingQueue.length > 0) {
-        const item = this.outgoingQueue.shift()!;
-        const channelId = item.jid.replace(/^slack:/, '');
-        // Preserve the original threadTs so flushed messages still thread
-        // under their intended anchor (fix: queue previously dropped it).
-        await this.app.client.chat.postMessage({
-          channel: channelId,
-          text: markdownToSlackMrkdwn(item.text),
-          ...(item.threadTs ? { thread_ts: item.threadTs } : {}),
-        });
-        logger.info(
-          { jid: item.jid, length: item.text.length, threadTs: item.threadTs },
-          'Queued Slack message sent',
-        );
+      for (const item of snapshot) {
+        // Route each queued item through `sendMessage` so it gets the same
+        // protections as a first-attempt send: chunked re-split for items
+        // exceeding MAX_MESSAGE_LENGTH, soft-fail detection (`resp.ok`),
+        // and re-queue-the-unsent-tail on throw. The previous direct
+        // `chat.postMessage` call here would silently lose any item whose
+        // `text` exceeded 4000 chars (Slack hard cap) — and PR #33's
+        // partial-fail catch path makes >4000-char queue entries common.
+        try {
+          await this.sendMessage(
+            item.jid,
+            item.text,
+            item.threadTs ? { threadTs: item.threadTs } : undefined,
+          );
+        } catch (err) {
+          // sendMessage's own catch handles errors and re-queues, so this
+          // outer catch is only reached if something unexpected throws
+          // outside the try/catch in sendMessage. Log and continue with
+          // the rest of the snapshot — do NOT abort the flush, which
+          // would silently strand items 2..N behind the first failure
+          // (the original .shift()-before-await bug).
+          logger.error(
+            { jid: item.jid, length: item.text.length, err },
+            'sendMessage threw during flush — continuing with rest of queue',
+          );
+        }
       }
     } finally {
       this.flushing = false;
