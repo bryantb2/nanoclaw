@@ -671,14 +671,8 @@ export class SlackChannel implements Channel {
       // partial-fail) get picked up by the NEXT flush trigger — preventing
       // an infinite re-flush loop within a single call when an item
       // persistently fails.
-      const snapshot = this.outgoingQueue.splice(
-        0,
-        this.outgoingQueue.length,
-      );
-      logger.info(
-        { count: snapshot.length },
-        'Flushing Slack outgoing queue',
-      );
+      const snapshot = this.outgoingQueue.splice(0, this.outgoingQueue.length);
+      logger.info({ count: snapshot.length }, 'Flushing Slack outgoing queue');
       for (const item of snapshot) {
         // Route each queued item through `sendMessage` so it gets the same
         // protections as a first-attempt send: chunked re-split for items
