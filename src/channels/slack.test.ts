@@ -856,6 +856,47 @@ describe('SlackChannel', () => {
       expect(queue[0].text.length).toBe(1000);
     });
 
+    it('queues exactly the failed-chunk-onward tail when a MIDDLE chunk fails', async () => {
+      // Audit gap fix (mutation survivor #4): the existing partial-fail test
+      // only exercises the case where the LAST chunk throws, so a mutation
+      // that moves `sentChars = chunkEnd` BEFORE the await would still pass
+      // (sentChars would equal text.length at the time of throw because
+      // the prior chunks already advanced it). This test exercises a chunk-2
+      // failure where the mutation would record sentChars=8000 instead of
+      // 4000 — losing the entire 'B' chunk's content.
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const postMock = currentApp().client.chat.postMessage as ReturnType<
+        typeof vi.fn
+      >;
+      // 9000 chars → 3 chunks of 4000/4000/1000. Chunk 1 succeeds, chunk 2 throws.
+      postMock
+        .mockResolvedValueOnce({ ok: true, ts: '1700000000.000100' })
+        .mockRejectedValueOnce(new Error('second chunk failed'));
+
+      const text = 'A'.repeat(4000) + 'B'.repeat(4000) + 'C'.repeat(1000);
+      const result = await channel.sendMessage('slack:C0123456789', text);
+      expect(result).toBeUndefined();
+
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: Array<{
+            jid: string;
+            text: string;
+            threadTs?: string;
+          }>;
+        }
+      ).outgoingQueue;
+      // The unsent tail must contain BOTH the failed chunk 2 AND chunk 3 —
+      // i.e. 'B'*4000 + 'C'*1000 = 5000 chars. If sentChars was incorrectly
+      // advanced before the await, the tail would be only 'C'*1000.
+      expect(queue).toHaveLength(1);
+      expect(queue[0].text).toBe('B'.repeat(4000) + 'C'.repeat(1000));
+      expect(queue[0].text.length).toBe(5000);
+    });
+
     it('does not queue anything when the entire split succeeds', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
@@ -936,6 +977,62 @@ describe('SlackChannel', () => {
       });
 
       expect(updateMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('applies empty-string edits (user blanked the message)', async () => {
+      // Audit gap fix: the gate is `typeof updated.text === 'string'`, NOT
+      // `updated.text` truthy, so an empty-string edit IS valid and should
+      // update the DB row. Pin this decision so a refactor to truthy-check
+      // doesn't silently regress.
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C0123456789',
+          message: { ts: '1700000000.000099', text: '' },
+        },
+      });
+
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        '1700000000.000099',
+        'slack:C0123456789',
+        '',
+      );
+    });
+
+    it('applies bot-own-edits to the DB row (current behavior — Fleet edits its own messages)', async () => {
+      // Audit gap fix: the handler does NOT filter on `bot_id`, so
+      // bot-edited messages (e.g. Fleet calling chat.update on its own
+      // output) DO update the DB row. That's intentional — bot edits
+      // should be reflected in stored history. Pin this decision so a
+      // future "filter out bot edits" refactor would have to update the
+      // test deliberately rather than silently regressing.
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      const handler = currentApp().eventHandlers.get('message');
+      await handler({
+        event: {
+          type: 'message',
+          subtype: 'message_changed',
+          channel: 'C0123456789',
+          message: {
+            ts: '1700000000.000099',
+            text: 'Fleet: revised output',
+            bot_id: 'B0FLEET01',
+          },
+        },
+      });
+
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        '1700000000.000099',
+        'slack:C0123456789',
+        'Fleet: revised output',
+      );
     });
 
     it('does NOT call onMessage for message_changed events (no double-storage)', async () => {

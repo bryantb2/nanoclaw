@@ -42,6 +42,16 @@ const MAX_MESSAGE_LENGTH = 4000;
 // (BotMessageEvent, subtype 'bot_message') so we can track our own output.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
 
+// Bolt's MessageEvent union doesn't expose `message_changed` as a discriminated
+// member with the embedded `message` field we need, so we declare a local
+// shape that matches the Slack API envelope. Used only by the message edit
+// handler in `setupEventHandlers`.
+type SlackMessageChangedEvent = {
+  subtype: 'message_changed';
+  channel: string;
+  message?: { ts?: string; text?: string; bot_id?: string };
+};
+
 // --- Slash command helpers ---
 
 /**
@@ -251,10 +261,7 @@ export class SlackChannel implements Channel {
       // see the current content, not the stale version. The edited
       // message keeps its original ts, so we update by (ts, chat_jid).
       if (subtype === 'message_changed') {
-        const changed = event as unknown as {
-          channel: string;
-          message?: { ts?: string; text?: string };
-        };
+        const changed = event as unknown as SlackMessageChangedEvent;
         const updated = changed.message;
         if (updated?.ts && typeof updated.text === 'string') {
           const jid = `slack:${changed.channel}`;
