@@ -236,6 +236,45 @@ describe('getMessagesSince', () => {
     );
     expect(msgs).toHaveLength(0);
   });
+
+  it('returns origin field on fetched rows (SELECT must include origin)', () => {
+    // PR #36 added the origin column on the WRITE side; this test pins the
+    // READ side. Without `origin` in the SELECT list, callers silently get
+    // `undefined` for `.origin` and any future code that branches on it
+    // (e.g. UI badge, audit filter) breaks invisibly.
+    storeMessage({
+      id: 'origin-ipc-1',
+      chat_jid: 'group@g.us',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: '@Andy ipc-routed task',
+      timestamp: '2024-01-01T00:00:10.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+      origin: 'ipc',
+    });
+    storeMessage({
+      id: 'origin-webhook-1',
+      chat_jid: 'group@g.us',
+      sender: 'Dave@s.whatsapp.net',
+      sender_name: 'Dave',
+      content: 'plain user message',
+      timestamp: '2024-01-01T00:00:11.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      origin: 'webhook',
+    });
+
+    const msgs = getMessagesSince(
+      'group@g.us',
+      '2024-01-01T00:00:09.000Z',
+      'Andy',
+    );
+    const ipcMsg = msgs.find((m) => m.id === 'origin-ipc-1');
+    const webhookMsg = msgs.find((m) => m.id === 'origin-webhook-1');
+    expect(ipcMsg?.origin).toBe('ipc');
+    expect(webhookMsg?.origin).toBe('webhook');
+  });
 });
 
 // --- getNewMessages ---
@@ -306,6 +345,45 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Andy');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+
+  it('returns origin field on fetched rows (SELECT must include origin)', () => {
+    // PR #36 added the origin column on the WRITE side; this test pins the
+    // READ side for getNewMessages. Mirror of the getMessagesSince origin
+    // test above. Without `origin` in the SELECT list, callers silently
+    // get `undefined` and any future origin-aware logic breaks invisibly.
+    storeMessage({
+      id: 'gn-ipc-1',
+      chat_jid: 'group1@g.us',
+      sender: 'ipc',
+      sender_name: 'ipc:slack_dispatch',
+      content: '@Andy ipc-routed task',
+      timestamp: '2024-01-01T00:00:10.000Z',
+      is_from_me: true,
+      is_bot_message: false,
+      origin: 'ipc',
+    });
+    storeMessage({
+      id: 'gn-webhook-1',
+      chat_jid: 'group1@g.us',
+      sender: 'Dave@s.whatsapp.net',
+      sender_name: 'Dave',
+      content: 'plain user message',
+      timestamp: '2024-01-01T00:00:11.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      origin: 'webhook',
+    });
+
+    const { messages } = getNewMessages(
+      ['group1@g.us'],
+      '2024-01-01T00:00:09.000Z',
+      'Andy',
+    );
+    const ipcMsg = messages.find((m) => m.id === 'gn-ipc-1');
+    const webhookMsg = messages.find((m) => m.id === 'gn-webhook-1');
+    expect(ipcMsg?.origin).toBe('ipc');
+    expect(webhookMsg?.origin).toBe('webhook');
   });
 });
 

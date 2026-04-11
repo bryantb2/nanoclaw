@@ -612,6 +612,20 @@ async function runQuery(
 
       const computedCost = computeCostFromTokens(accumulatedUsage, detectedModel);
       log(`Result #${resultCount}: sdkCost=$${sdkCost.toFixed(4)}, computedCost=$${computedCost.toFixed(4)} (fallback), model=${detectedModel || 'unknown'}`);
+      // DIAG (todo: cost-tracking/main-group-missing-usage-data): isMain
+      // (dispatch) containers fall through to this branch with computedCost=0
+      // but sdkCost>0, meaning the SDK populated total_cost_usd but neither
+      // result.usage NOR result.modelUsage. Dump the raw shapes so a future
+      // session can root-cause why isMain runs lose per-token visibility.
+      if (computedCost === 0 && sdkCost > 0) {
+        log(
+          `DIAG: zero-token fallback fired — sdkCost=$${sdkCost.toFixed(4)}, ` +
+            `resultUsage=${JSON.stringify(resultUsage ?? null)}, ` +
+            `modelUsage=${JSON.stringify(modelUsage ?? null)}, ` +
+            `accumulatedUsage=${JSON.stringify(accumulatedUsage)}, ` +
+            `detectedModel=${detectedModel ?? 'unknown'}`,
+        );
+      }
       writeOutput({
         status: 'success',
         result: textResult || null,
