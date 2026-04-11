@@ -242,6 +242,7 @@ Filter out any ticket IDs already present in `in_flight[]` or `completed[]`.
 For each new ticket not already in state:
 - Add to `in_flight[]` with `stage: "waiting_for_pr"`, `dispatched_at: now`
 - Read relevant completion records to gather context (recent qa-sentinel findings, dev-ops notes)
+- **Check for routing collisions** (see Routing Coordination below) — if another agent is already working on the same PR/ticket/branch, do NOT route. Wait for their work to complete.
 - Write IPC message to #dev-team:
 
 ```json
@@ -282,6 +283,28 @@ In-flight: {N} | Completed this cycle: {N}
 ```
 
 Keep it short. Operators scan #dispatch for actionable updates, not operational telemetry.
+
+## Routing Coordination — NEVER route the same PR to multiple agents simultaneously
+
+Dev-team and qa-sentinel both have write access to overlapping forcify repos. If you route the same task to both in parallel, they can independently find and fix the same issue — wasting API spend, causing git race conditions, and producing conflicting commits.
+
+**The rule: at most ONE subordinate agent may be actively working on a given PR, branch, or Linear ticket at any time.** You are the coordinator. Enforce it.
+
+**Before writing any IPC routing message, check for collisions:**
+
+1. **Same Linear ticket already dispatched?** Scan `/workspace/output/build-loop-state.json` `in_flight[]` for an entry whose `linear_ticket_id` matches. If present with `stage: "waiting_for_pr"` or `"waiting_for_qa"`, do NOT route again — whichever agent owns that stage is already on it. Log "ticket {ID} already in flight at stage {STAGE}, skipping".
+2. **Same PR URL already in the pipeline?** Scan `in_flight[]` for an entry whose `pr_url` matches. Same rule.
+3. **QA already gating a PR?** If `stage: "waiting_for_qa"`, dev-team is NOT allowed to touch that branch. If a new `pr_ready_for_review` signal arrives for the same PR while QA is gating, log a warning and discard — dev-team shouldn't have re-pushed mid-gate.
+4. **Dev-team currently fixing a CI failure?** If you sent a "fix CI on PR #X" task within the last 30 minutes and it's still in flight (no completion record yet), do NOT also route "run QA on PR #X" to qa-sentinel. Wait for dev-team to finish.
+
+**Never fan out the same PR across groups.** If a failing PR needs both "push a fix" AND "re-run QA", route to dev-team first, wait for completion, then route to qa-sentinel for re-validation.
+
+**Stage transitions are the ONLY valid handoff mechanism:**
+- `waiting_for_pr` → dev-team owns the branch
+- `waiting_for_qa` → qa-sentinel owns the PR (reads + reports, does NOT push fixes; see qa-sentinel CLAUDE.md)
+- `pr_ready_for_review` → neither agent should touch it; awaiting human merge
+
+**If you find a violation (two agents active on the same PR):** post an alert to #fleet-ops immediately: `[COLLISION] PR #{N}: {AGENT_A} and {AGENT_B} both active. Investigation required.`
 
 ## Noise Control
 

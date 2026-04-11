@@ -43,6 +43,14 @@ const NON_MAIN_GROUP: RegisteredGroup = {
   added_at: '2024-01-01T00:00:00.000Z',
 };
 
+const TELEGRAM_GROUP: RegisteredGroup = {
+  name: 'tg-team',
+  folder: 'tg_team',
+  trigger: '@Fleet',
+  added_at: '2024-01-01T00:00:00.000Z',
+  requiresTrigger: true,
+};
+
 let groups: Record<string, RegisteredGroup>;
 
 beforeEach(() => {
@@ -53,16 +61,19 @@ beforeEach(() => {
     'slack:dev-team': DEV_TEAM_GROUP,
     'slack:qa-sentinel': QA_GROUP,
     'slack:other': NON_MAIN_GROUP,
+    'tg:12345': TELEGRAM_GROUP,
   };
 
   setRegisteredGroup('slack:dispatch', DISPATCH_GROUP);
   setRegisteredGroup('slack:dev-team', DEV_TEAM_GROUP);
   setRegisteredGroup('slack:qa-sentinel', QA_GROUP);
   setRegisteredGroup('slack:other', NON_MAIN_GROUP);
+  setRegisteredGroup('tg:12345', TELEGRAM_GROUP);
 
   // Initialize chat metadata so getNewMessages can find messages
   storeChatMetadata('slack:dev-team', '2024-01-01T00:00:00.000Z');
   storeChatMetadata('slack:qa-sentinel', '2024-01-01T00:00:00.000Z');
+  storeChatMetadata('tg:12345', '2024-01-01T00:00:00.000Z');
 });
 
 // --- processMessageIpc ---
@@ -728,5 +739,76 @@ describe('timestamp format affects getNewMessages visibility', () => {
       'Fleet',
     );
     expect(messages).toHaveLength(1);
+  });
+});
+
+// --- Telegram dispatch routing (Option B undefined-ts fallback) ---
+// Telegram sendMessage always returns undefined per the Channel interface
+// contract — Telegram message_ids are not usable as Slack-style thread_ts
+// anchors. When dispatch routes an IPC message to a Telegram-backed group,
+// injectMessage must fall back to a synthetic ipc- id.
+//
+// processMessageIpc itself is platform-agnostic (no JID-prefix branching),
+// so the lower-level "forwards undefined ts" and "rejects cross-group
+// routing" cases are already covered against `slack:dev-team` targets
+// earlier in this file. The single test below adds the only new fault
+// detection a Telegram fixture buys us: an end-to-end integration through
+// the REAL injectIpcMessage helper, which proves undefined realTs survives
+// processMessageIpc → injectMessage → buildInjectedMessage → storeMessage
+// → getNewMessages and lands as a synthetic ipc- id row.
+
+describe('processMessageIpc — Telegram dispatch fallback', () => {
+  it('injectIpcMessage integration: Telegram path stores a synthetic ipc- id', async () => {
+    // Wire processMessageIpc through the REAL injectIpcMessage helper (not
+    // a mock) so we verify end-to-end that undefined → synthetic id → DB.
+    // This is the only test that exercises the full dispatch → inject →
+    // persist → read pipeline; the lower-level pieces (processMessageIpc
+    // forwarding undefined, buildInjectedMessage building synthetic ids,
+    // storeMessage writing the row) are each covered in isolation
+    // elsewhere — this catches breakage at the seams between them.
+    const { injectIpcMessage } = await import('./ipc-inject.js');
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const enqueueCalls: string[] = [];
+
+    await processMessageIpc(
+      {
+        type: 'message',
+        chatJid: 'tg:12345',
+        text: '@Fleet work',
+      },
+      'slack_dispatch',
+      true,
+      groups,
+      {
+        sendMessage,
+        injectMessage: (chatJid, text, senderName, realTs) =>
+          injectIpcMessage(
+            {
+              storeMessage,
+              enqueueMessageCheck: (jid) => enqueueCalls.push(jid),
+              now: () => '2026-04-11T00:00:00.000Z',
+              rand: () => 'tg0001',
+            },
+            chatJid,
+            text,
+            senderName,
+            realTs,
+          ),
+      },
+    );
+
+    expect(enqueueCalls).toEqual(['tg:12345']);
+
+    // Look up what was stored — must use the synthetic ipc- id format
+    // since Telegram returned undefined for realTs.
+    const { messages } = getNewMessages(
+      ['tg:12345'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe('ipc-2026-04-11T00:00:00.000Z-tg0001');
+    expect(messages[0].sender).toBe('ipc');
+    expect(messages[0].content).toBe('@Fleet work');
   });
 });
