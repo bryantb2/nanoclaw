@@ -808,9 +808,15 @@ describe('SlackChannel', () => {
       // Subsequent flush (simulated by reconnecting after stub reset) must
       // include thread_ts on the retried message. We just verify the queue
       // item retained threadTs by inspecting the private field.
-      const queue = (channel as unknown as {
-        outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }>;
-      }).outgoingQueue;
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: Array<{
+            jid: string;
+            text: string;
+            threadTs?: string;
+          }>;
+        }
+      ).outgoingQueue;
       expect(queue).toHaveLength(1);
       expect(queue[0].threadTs).toBe('1700000000.000042');
       expect(queue[0].text).toBe('Threaded update');
@@ -834,9 +840,15 @@ describe('SlackChannel', () => {
       const result = await channel.sendMessage('slack:C0123456789', text);
       expect(result).toBeUndefined();
 
-      const queue = (channel as unknown as {
-        outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }>;
-      }).outgoingQueue;
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: Array<{
+            jid: string;
+            text: string;
+            threadTs?: string;
+          }>;
+        }
+      ).outgoingQueue;
       // Only the unsent 3rd chunk ('C' x 1000) should be queued — NOT the
       // full 9000-char text. Otherwise chunks 1 + 2 double-post on retry.
       expect(queue).toHaveLength(1);
@@ -852,9 +864,11 @@ describe('SlackChannel', () => {
       const text = 'X'.repeat(4500); // 2 chunks
       await channel.sendMessage('slack:C0123456789', text);
 
-      const queue = (channel as unknown as {
-        outgoingQueue: unknown[];
-      }).outgoingQueue;
+      const queue = (
+        channel as unknown as {
+          outgoingQueue: unknown[];
+        }
+      ).outgoingQueue;
       expect(queue).toHaveLength(0);
     });
   });

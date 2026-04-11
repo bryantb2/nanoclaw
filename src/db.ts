@@ -393,9 +393,7 @@ export function updateMessageContent(
   content: string,
 ): number {
   const result = db
-    .prepare(
-      `UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?`,
-    )
+    .prepare(`UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?`)
     .run(content, id, chatJid);
   return result.changes;
 }
