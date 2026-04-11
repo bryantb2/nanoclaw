@@ -48,10 +48,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import {
-  injectIpcMessage,
-  resolveOutboundThreadOpts,
-} from './ipc-inject.js';
+import { injectIpcMessage, resolveOutboundThreadOpts } from './ipc-inject.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
