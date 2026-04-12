@@ -42,6 +42,14 @@ vi.mock('fs', async () => {
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
       copyFileSync: vi.fn(),
+      // Cache-refresh helper invokes these every spawn (PR #40 Option B
+      // fixups). Mock as no-ops since the unit tests in
+      // refresh-agent-runner-src-cache.test.ts cover the real semantics
+      // against a tmp dir; here we only care that the helper is invoked
+      // with the correct arguments.
+      cpSync: vi.fn(),
+      rmSync: vi.fn(),
+      renameSync: vi.fn(),
     },
   };
 });
@@ -102,6 +110,8 @@ import {
   ContainerOutput,
   TokenUsage,
 } from './container-runner.js';
+import fs from 'fs';
+import path from 'path';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -427,5 +437,127 @@ describe('cost tracking through container-runner', () => {
     (fs.readFileSync as ReturnType<typeof vi.fn>).mockImplementation(() => '');
     (fs.unlinkSync as unknown) = originalUnlinkSync;
     void originalReadFileSync;
+  });
+});
+
+// --- Integration: cache refresh wiring (Option B fixup #4 from PR #40 review) ---
+//
+// The 11 unit tests in refresh-agent-runner-src-cache.test.ts cover the helper's
+// real wipe-and-recopy semantics against a tmp dir. THIS test pins the wiring
+// between buildVolumeMounts and the helper: it asserts that runContainerAgent
+// (the only production entry point that calls buildVolumeMounts) actually
+// invokes cpSync/rmSync/renameSync on the agent-runner src cache path. Without
+// this test, a future refactor that drops the helper invocation entirely would
+// not break a single existing test — and the populate-once regression would
+// silently return.
+
+describe('container-runner agent-runner cache refresh wiring', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    // Mock fs calls used by the cache-refresh helper. cpSync/rmSync/renameSync
+    // are no-ops in the global mock; we just need to verify they were CALLED
+    // with the expected arguments.
+    (fs.cpSync as ReturnType<typeof vi.fn>).mockClear();
+    (fs.rmSync as ReturnType<typeof vi.fn>).mockClear();
+    (fs.renameSync as ReturnType<typeof vi.fn>).mockClear();
+    // existsSync needs to return true for `agentRunnerSrc` so the helper
+    // doesn't short-circuit. Default is `false`; we override per-test.
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        // Return true ONLY for the agent-runner src path; everything else
+        // (including the dest dir, output dir, IPC dir) defaults to false
+        // so the rest of buildVolumeMounts behaves as before.
+        return p.includes(path.join('container', 'agent-runner', 'src'));
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockImplementation(() => false);
+  });
+
+  it('invokes cpSync on the agent-runner src path during runContainerAgent', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'done',
+      newSessionId: 'session-cache-test',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    // Find the cpSync call that targets the agent-runner src cache. Other
+    // cpSync calls (e.g. skills sync) may also fire from buildVolumeMounts;
+    // filter to the one we care about by checking the source path.
+    const cpSyncCalls = (fs.cpSync as ReturnType<typeof vi.fn>).mock.calls;
+    const agentRunnerCpCall = cpSyncCalls.find((call: unknown[]) => {
+      const src = call[0];
+      return (
+        typeof src === 'string' &&
+        src.includes(path.join('container', 'agent-runner', 'src'))
+      );
+    });
+
+    expect(agentRunnerCpCall).toBeDefined();
+    // Atomic-rename pattern: cpSync target should be the SCRATCH dir
+    // (`<dest>.new`), NOT the final dest. The renameSync below moves it
+    // into place. If a future refactor accidentally reverts to direct
+    // cpSync into dest, this assertion fails loudly.
+    const cpDest = agentRunnerCpCall![1] as string;
+    expect(cpDest).toContain(
+      path.join('sessions', 'test-group', 'agent-runner-src'),
+    );
+    expect(cpDest.endsWith('.new')).toBe(true);
+  });
+
+  it('invokes renameSync to swap the scratch dir into place', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'done',
+      newSessionId: 'session-rename-test',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    // The atomic-rename pattern's final step is renameSync(scratch, dest).
+    // If anyone reverts to in-place cpSync (no rename) this test fails.
+    const renameSyncCalls = (fs.renameSync as ReturnType<typeof vi.fn>).mock
+      .calls;
+    const renameCall = renameSyncCalls.find((call: unknown[]) => {
+      const src = call[0];
+      const dest = call[1];
+      return (
+        typeof src === 'string' &&
+        typeof dest === 'string' &&
+        src.endsWith('.new') &&
+        src.includes(
+          path.join('sessions', 'test-group', 'agent-runner-src.new'),
+        ) &&
+        dest.includes(path.join('sessions', 'test-group', 'agent-runner-src'))
+      );
+    });
+
+    expect(renameCall).toBeDefined();
   });
 });

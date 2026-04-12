@@ -14,7 +14,7 @@
  * Per-group isolation (security fix #392) is preserved by keeping the
  * cache directory per-group; only the contents are refreshed.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -205,5 +205,118 @@ describe('refreshAgentRunnerSrcCache', () => {
     expect(
       fs.readFileSync(path.join(groupCacheA, 'sub', 'nested.ts'), 'utf-8'),
     ).toBe('export const NESTED = true;\n');
+  });
+
+  // --- Atomic-rename safety (Option B fixups from PR #40 code review) ---
+
+  it('cleans up a leftover .new scratch dir from a prior failed refresh', () => {
+    // Simulates: a previous refresh attempt died after creating the scratch
+    // dir but before completing the swap (e.g., NanoClaw killed mid-rmSync).
+    // The next refresh must clean up the leftover scratch and produce a
+    // valid cache without surfacing the leftover state to callers.
+    const scratchDir = `${groupCacheA}.new`;
+    fs.mkdirSync(scratchDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(scratchDir, 'leftover-stale.ts'),
+      'export const LEFTOVER_FROM_PRIOR_RUN = true;\n',
+    );
+
+    refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
+
+    // Cache must contain fresh upstream content.
+    expect(
+      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
+    ).toBe('export const VERSION = "fresh";\n');
+    // Leftover scratch must be gone.
+    expect(fs.existsSync(scratchDir)).toBe(false);
+    // Leftover content must NOT have leaked into the cache.
+    expect(fs.existsSync(path.join(groupCacheA, 'leftover-stale.ts'))).toBe(
+      false,
+    );
+  });
+
+  it('preserves the existing cache when cpSync fails mid-copy (disk full simulation)', () => {
+    // Simulates: cpSync fails partway through (disk full, EIO, permission
+    // revocation). The atomic-rename pattern's whole point is that this
+    // failure mode does NOT corrupt the existing cache — the next spawn
+    // must still be able to use the OLD cache, not a half-copied broken
+    // tree. This is the single highest-value hardening from the code review.
+    //
+    // Realistic failure injection requires `vi.spyOn` because the helper
+    // pre-cleans scratchDir with `force: true` (any sentinel we'd plant
+    // gets wiped before cpSync runs), and Node's chmod behavior is
+    // inconsistent across CI runners. Spy gives us deterministic ENOSPC.
+    refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
+    const goodCacheSnapshot = fs
+      .readdirSync(groupCacheA)
+      .sort();
+    const goodIndexContent = fs.readFileSync(
+      path.join(groupCacheA, 'index.ts'),
+      'utf-8',
+    );
+
+    const cpSyncSpy = vi.spyOn(fs, 'cpSync').mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device, copyfile');
+    });
+
+    expect(() =>
+      refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA),
+    ).toThrow('ENOSPC');
+
+    cpSyncSpy.mockRestore();
+
+    // CRITICAL: the existing cache must be untouched.
+    expect(fs.existsSync(groupCacheA)).toBe(true);
+    expect(fs.readdirSync(groupCacheA).sort()).toEqual(goodCacheSnapshot);
+    expect(
+      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
+    ).toBe(goodIndexContent);
+
+    // No scratch dir should remain on disk after the failure.
+    expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
+  });
+
+  it('cleans up scratch dir on failure so retries do not accumulate state', () => {
+    // After a failed refresh, the next attempt must start from a clean
+    // slate — no half-baked scratch dir lingering. This protects against
+    // a degenerate case where repeated failures pile up scratch dirs and
+    // eventually fill the disk.
+    refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
+
+    const cpSyncSpy = vi
+      .spyOn(fs, 'cpSync')
+      .mockImplementationOnce(() => {
+        throw new Error('EIO: i/o error, copyfile');
+      });
+
+    expect(() =>
+      refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA),
+    ).toThrow('EIO');
+
+    cpSyncSpy.mockRestore();
+
+    // Helper's catch block should have removed any scratch dir. Verify
+    // by checking the disk state directly + by running a clean refresh
+    // and asserting it succeeds without inheriting any leftover state.
+    expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
+
+    refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
+    expect(
+      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
+    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
+  });
+
+  it('does not throw when the dest directory does not exist (force flag)', () => {
+    // Issue #1 from code review: the previous version used
+    // `if (existsSync(dest)) rmSync(dest)` — vulnerable to TOCTOU between
+    // the existsSync and rmSync if an operator/backup deletes the dir
+    // mid-call. The new version drops the existsSync gate and uses
+    // `force: true` on rmSync, making the helper resilient to that case.
+    expect(fs.existsSync(groupCacheA)).toBe(false);
+    expect(() =>
+      refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA),
+    ).not.toThrow();
+    expect(fs.existsSync(groupCacheA)).toBe(true);
   });
 });

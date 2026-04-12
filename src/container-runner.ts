@@ -158,6 +158,15 @@ interface VolumeMount {
  * isolation is preserved because each group still gets an independent
  * writable copy at a distinct path (`groupAgentRunnerDir` is per-group).
  *
+ * **Atomic rename pattern.** Naive `rmSync(dest); cpSync(src, dest)` would
+ * leave a partial cache on disk if `cpSync` fails midway (disk full, EIO,
+ * permission revocation), and the next container's `tsc` step would crash
+ * on the broken source tree. Instead we copy to a sibling `dest + '.new'`
+ * scratch dir first, then swap: if the cp fails, the existing cache is
+ * intact and the next spawn retries cleanly. The final swap is rmSync(dest)
+ * + renameSync(.new, dest); if the host dies between the two, the next
+ * spawn finds no dest, cleans the leftover .new, and recopies fresh.
+ *
  * @internal — exported only for tests; production callers go through
  * `buildVolumeMounts`.
  */
@@ -166,10 +175,39 @@ export function refreshAgentRunnerSrcCache(
   groupAgentRunnerDir: string,
 ): void {
   if (!fs.existsSync(agentRunnerSrc)) return;
-  if (fs.existsSync(groupAgentRunnerDir)) {
-    fs.rmSync(groupAgentRunnerDir, { recursive: true });
+  const scratchDir = `${groupAgentRunnerDir}.new`;
+  try {
+    // Clean up any leftover scratch dir from a prior failed/aborted refresh.
+    // `force: true` makes this a no-op if the path doesn't exist (the common
+    // case) and tolerates concurrent operator/backup deletion.
+    fs.rmSync(scratchDir, { recursive: true, force: true });
+    // Copy to scratch first. If this throws (disk full, EIO), the existing
+    // cache at groupAgentRunnerDir is untouched — failure is isolated.
+    fs.cpSync(agentRunnerSrc, scratchDir, { recursive: true });
+    // Atomic-ish swap: drop the old cache then rename scratch into place.
+    // The window where dest is missing is sub-millisecond and protected by
+    // GroupQueue.active serialization (only one spawn per group at a time).
+    fs.rmSync(groupAgentRunnerDir, { recursive: true, force: true });
+    fs.renameSync(scratchDir, groupAgentRunnerDir);
+    logger.debug(
+      { groupAgentRunnerDir },
+      'Refreshed agent-runner src cache',
+    );
+  } catch (err) {
+    // Best-effort scratch cleanup so a partial copy doesn't accumulate
+    // across retries. Real failure is propagated to the caller (which
+    // owns the spawn lifecycle and can decide whether to fail or retry).
+    try {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    } catch {
+      /* ignore secondary cleanup failure */
+    }
+    logger.error(
+      { agentRunnerSrc, groupAgentRunnerDir, err },
+      'Failed to refresh agent-runner src cache',
+    );
+    throw err;
   }
-  fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
 }
 
 function buildVolumeMounts(
@@ -291,12 +329,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
-  // can customize it (add tools, change behavior) without affecting other
-  // groups. Per-group isolation is required by security fix #392 (commit
-  // 5fb10645) which mounted the project root read-only to prevent sandbox
-  // escape — agents need a writable copy of agent-runner code, but it must
-  // not be shared across groups.
+  // Per-group writable copy of agent-runner source. Required by security
+  // fix #392 (commit 5fb10645) which mounted the project root read-only
+  // to prevent sandbox escape — each group needs its own writable copy at
+  // a distinct path so cross-group code mutation is impossible.
+  //
+  // The cache is REFRESHED on every spawn (not persistent across spawns)
+  // so upstream agent-runner changes actually deploy. See the helper's
+  // docstring above for the full incident history and atomic-rename
+  // rationale. Do NOT write runtime state into this dir — it gets wiped
+  // on the next container spawn.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
