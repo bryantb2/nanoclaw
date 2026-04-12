@@ -224,9 +224,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
 
     // Cache must contain fresh upstream content.
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
     // Leftover scratch must be gone.
     expect(fs.existsSync(scratchDir)).toBe(false);
     // Leftover content must NOT have leaked into the cache.
@@ -247,9 +247,7 @@ describe('refreshAgentRunnerSrcCache', () => {
     // gets wiped before cpSync runs), and Node's chmod behavior is
     // inconsistent across CI runners. Spy gives us deterministic ENOSPC.
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
-    const goodCacheSnapshot = fs
-      .readdirSync(groupCacheA)
-      .sort();
+    const goodCacheSnapshot = fs.readdirSync(groupCacheA).sort();
     const goodIndexContent = fs.readFileSync(
       path.join(groupCacheA, 'index.ts'),
       'utf-8',
@@ -268,9 +266,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     // CRITICAL: the existing cache must be untouched.
     expect(fs.existsSync(groupCacheA)).toBe(true);
     expect(fs.readdirSync(groupCacheA).sort()).toEqual(goodCacheSnapshot);
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe(goodIndexContent);
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      goodIndexContent,
+    );
 
     // No scratch dir should remain on disk after the failure.
     expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
@@ -283,11 +281,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     // eventually fill the disk.
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
 
-    const cpSyncSpy = vi
-      .spyOn(fs, 'cpSync')
-      .mockImplementationOnce(() => {
-        throw new Error('EIO: i/o error, copyfile');
-      });
+    const cpSyncSpy = vi.spyOn(fs, 'cpSync').mockImplementationOnce(() => {
+      throw new Error('EIO: i/o error, copyfile');
+    });
 
     expect(() =>
       refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA),
@@ -301,9 +297,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
 
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
     expect(fs.existsSync(`${groupCacheA}.new`)).toBe(false);
   });
 

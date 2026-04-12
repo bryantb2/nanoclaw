@@ -189,10 +189,7 @@ export function refreshAgentRunnerSrcCache(
     // GroupQueue.active serialization (only one spawn per group at a time).
     fs.rmSync(groupAgentRunnerDir, { recursive: true, force: true });
     fs.renameSync(scratchDir, groupAgentRunnerDir);
-    logger.debug(
-      { groupAgentRunnerDir },
-      'Refreshed agent-runner src cache',
-    );
+    logger.debug({ groupAgentRunnerDir }, 'Refreshed agent-runner src cache');
   } catch (err) {
     // Best-effort scratch cleanup so a partial copy doesn't accumulate
     // across retries. Real failure is propagated to the caller (which
