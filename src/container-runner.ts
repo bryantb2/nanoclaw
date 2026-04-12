@@ -133,6 +133,45 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+/**
+ * Refresh a group's agent-runner source cache from the upstream source.
+ *
+ * The per-group cache exists because of security fix #392 (commit 5fb10645):
+ * the project root is mounted read-only to prevent sandbox escape, so each
+ * group needs its own writable copy of the agent-runner source. The
+ * container's entrypoint recompiles `/app/src` (this cache) to `/tmp/dist`
+ * on every spawn and runs from there — `/app/dist` from the image build is
+ * never executed, only this cache is.
+ *
+ * This MUST run on every container spawn. The previous implementation used
+ * `if (!fs.existsSync(groupAgentRunnerDir)) cpSync(...)` which made the cache
+ * write-once: once a group spawned its first container, every subsequent
+ * agent-runner change was silently swallowed for that group, even after
+ * `restart-fleet.sh` and submodule bumps. PR #29 (token-based cost tracking)
+ * shipped to the host on Apr 9 but never reached cached groups, which is
+ * why dispatch / dev-team / qa-sentinel / fleet-ops continued reporting
+ * `cost_source='sdk'` with 0 tokens for two days.
+ *
+ * Wipe-and-recopy is safe: the cache contains only TypeScript source files,
+ * no per-group customizations or session state lives inside the cache dir,
+ * and there are no external references to files inside it. Per-group
+ * isolation is preserved because each group still gets an independent
+ * writable copy at a distinct path (`groupAgentRunnerDir` is per-group).
+ *
+ * @internal — exported only for tests; production callers go through
+ * `buildVolumeMounts`.
+ */
+export function refreshAgentRunnerSrcCache(
+  agentRunnerSrc: string,
+  groupAgentRunnerDir: string,
+): void {
+  if (!fs.existsSync(agentRunnerSrc)) return;
+  if (fs.existsSync(groupAgentRunnerDir)) {
+    fs.rmSync(groupAgentRunnerDir, { recursive: true });
+  }
+  fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -254,7 +293,10 @@ function buildVolumeMounts(
 
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
-  // groups. Recompiled on container startup via entrypoint.sh.
+  // groups. Per-group isolation is required by security fix #392 (commit
+  // 5fb10645) which mounted the project root read-only to prevent sandbox
+  // escape — agents need a writable copy of agent-runner code, but it must
+  // not be shared across groups.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
@@ -267,9 +309,7 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
-  }
+  refreshAgentRunnerSrcCache(agentRunnerSrc, groupAgentRunnerDir);
   mounts.push({
     hostPath: groupAgentRunnerDir,
     containerPath: '/app/src',
