@@ -32,8 +32,18 @@ describe('refreshAgentRunnerSrcCache', () => {
       path.join(os.tmpdir(), 'nanoclaw-cache-refresh-test-'),
     );
     agentRunnerSrc = path.join(tmpRoot, 'src');
-    groupCacheA = path.join(tmpRoot, 'sessions', 'slack_groupA', 'agent-runner-src');
-    groupCacheB = path.join(tmpRoot, 'sessions', 'slack_groupB', 'agent-runner-src');
+    groupCacheA = path.join(
+      tmpRoot,
+      'sessions',
+      'slack_groupA',
+      'agent-runner-src',
+    );
+    groupCacheB = path.join(
+      tmpRoot,
+      'sessions',
+      'slack_groupB',
+      'agent-runner-src',
+    );
 
     // Build a minimal upstream source dir with two distinct files so we
     // can verify both file contents AND directory structure are copied.
@@ -58,12 +68,12 @@ describe('refreshAgentRunnerSrcCache', () => {
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
 
     expect(fs.existsSync(groupCacheA)).toBe(true);
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'helper.ts'), 'utf-8'),
-    ).toBe('export function helper(): string { return "fresh"; }\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
+    expect(fs.readFileSync(path.join(groupCacheA, 'helper.ts'), 'utf-8')).toBe(
+      'export function helper(): string { return "fresh"; }\n',
+    );
   });
 
   it('REFRESHES a stale cache (the regression fix from PR #29 cache bug)', () => {
@@ -87,9 +97,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
 
     // Stale content must be replaced with fresh upstream content.
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
     // Stale-only file must be gone.
     expect(
       fs.existsSync(path.join(groupCacheA, 'removed-in-newer-source.ts')),
@@ -113,12 +123,12 @@ describe('refreshAgentRunnerSrcCache', () => {
       path.join(groupCacheA, 'index.ts'),
       'export const VERSION = "agentA-customized";\n',
     );
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "agentA-customized";\n');
-    expect(
-      fs.readFileSync(path.join(groupCacheB, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "agentA-customized";\n',
+    );
+    expect(fs.readFileSync(path.join(groupCacheB, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
   });
 
   it('refresh wipes per-group customizations (acceptable trade-off)', () => {
@@ -137,9 +147,9 @@ describe('refreshAgentRunnerSrcCache', () => {
     refreshAgentRunnerSrcCache(agentRunnerSrc, groupCacheA);
 
     // Customization is gone, fresh upstream content is back.
-    expect(
-      fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8'),
-    ).toBe('export const VERSION = "fresh";\n');
+    expect(fs.readFileSync(path.join(groupCacheA, 'index.ts'), 'utf-8')).toBe(
+      'export const VERSION = "fresh";\n',
+    );
   });
 
   it('is a no-op when the upstream source dir does not exist', () => {
