@@ -33,6 +33,13 @@
 - Stack: [Blake fills in]
 - Testing: [Blake fills in]
 
+## Forcify Pre-Implementation Gate
+
+When working on the forcify repo (`/workspace/extra/repos/forcify`):
+- Read `/workspace/extra/repos/forcify/CLAUDE.md` — contains the 4-step implementation gate specific to forcify
+- Read `/workspace/extra/repos/forcify/AGENTS.md` — pattern catalog, key systems, quality gates
+- Follow the forcify gate steps before writing any code; the repo-specific gate extends the generic global gate with forcify-specific checks (sibling page patterns, test decision matrix, migration safety)
+
 ## Pre-PR Verification
 
 Before opening a PR, run the project's test suite locally to catch issues early — this saves a round-trip through QA and avoids back-and-forth on fixable problems.
