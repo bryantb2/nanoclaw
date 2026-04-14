@@ -264,6 +264,19 @@ export function isSubstantiveApproach(text: string): boolean {
 }
 
 const APPROACH_MARKER_PATH = '/workspace/ipc/approach-posted.json';
+const TEST_PASSED_MARKER_PATH = '/workspace/ipc/test-passed.json';
+
+export function validateTestPassedMarker(markerPath: string): boolean {
+  try {
+    const data = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
+    if (data.passed !== true) return false;
+    if (typeof data.coverageAfter !== 'number') return false;
+    if (typeof data.coverageDelta === 'number' && data.coverageDelta < 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function createGateHook(isMain: boolean): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -285,6 +298,30 @@ function createGateHook(isMain: boolean): HookCallback {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason: 'Approach not posted. Call send_message with your implementation plan (>100 chars) first.',
+      },
+    };
+  };
+}
+
+function createTestGateHook(isMain: boolean): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // D-04: dispatch exempt
+    if (input.hook_event_name !== 'PreToolUse') return {};
+
+    const toolName = (input as any).tool_name as string;
+    if (toolName !== 'Bash') return {};
+
+    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    if (!command.includes('gh pr create')) return {};
+
+    if (fs.existsSync(TEST_PASSED_MARKER_PATH) && validateTestPassedMarker(TEST_PASSED_MARKER_PATH)) return {};
+
+    return {
+      systemMessage: 'You must run tests and ensure coverage does not regress before creating a PR. Run the test suite, capture before/after coverage, and write test-passed.json to /workspace/ipc/ with: { "passed": true, "testCount": N, "failCount": 0, "coverageBefore": X, "coverageAfter": Y, "coverageDelta": D, "passedAt": "ISO timestamp" }',
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Tests not passed or coverage regressed. Run tests, verify coverage >= baseline, write /workspace/ipc/test-passed.json.',
       },
     };
   };
@@ -598,7 +635,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain), createTestGateHook(containerInput.isMain)] }],
       },
     }
   })) {
@@ -717,6 +754,8 @@ async function main(): Promise<void> {
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
   // Clear stale approach marker from previous container runs
   try { fs.unlinkSync('/workspace/ipc/approach-posted.json'); } catch { /* ignore */ }
+  // Clear stale test-passed marker from previous container runs
+  try { fs.unlinkSync('/workspace/ipc/test-passed.json'); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
