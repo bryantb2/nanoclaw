@@ -349,6 +349,67 @@ function parseCheckResults(checks: Array<{ status: string; conclusion: string }>
   return { allDone, allPassed };
 }
 
+// --- QA evidence gate ---
+
+const QA_EVIDENCE_DIR = '/workspace/ipc/qa-evidence';
+const REQUIRED_EVIDENCE_ALWAYS = ['test-logs.json', 'coverage-delta.json', 'verification-notes.json'];
+const FRONTEND_EXTENSIONS_QA = ['.tsx', '.jsx', '.css', '.html'];
+
+function isFrontendChange(changedFiles: string[]): boolean {
+  return changedFiles.some(f => FRONTEND_EXTENSIONS_QA.some(ext => f.endsWith(ext)));
+}
+
+function getRequiredEvidenceFiles(isFrontend: boolean): string[] {
+  return isFrontend
+    ? [...REQUIRED_EVIDENCE_ALWAYS, 'screenshots.json']
+    : [...REQUIRED_EVIDENCE_ALWAYS];
+}
+
+function checkQaEvidence(evidenceDir: string, isFrontend: boolean): { complete: boolean; missing: string[] } {
+  const required = getRequiredEvidenceFiles(isFrontend);
+  const missing = required.filter(f => !fs.existsSync(path.join(evidenceDir, f)));
+  return { complete: missing.length === 0, missing };
+}
+
+function createQaEvidenceGateHook(isMain: boolean): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // dispatch exempt
+    if (input.hook_event_name !== 'PreToolUse') return {};
+
+    const toolName = (input as any).tool_name as string;
+    if (toolName !== 'Bash') return {};
+
+    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    if (!command.includes('gh pr review')) return {};
+    if (!command.includes('--approve')) return {};
+
+    // Detect frontend changes
+    let isFrontend = false;
+    try {
+      const { stdout } = await execAsync('git diff --name-only origin/master...HEAD');
+      const changedFiles = stdout.trim().split('\n').filter(Boolean);
+      isFrontend = isFrontendChange(changedFiles);
+    } catch {
+      // If git diff fails, assume non-frontend (conservative)
+    }
+
+    const { complete, missing } = checkQaEvidence(QA_EVIDENCE_DIR, isFrontend);
+
+    if (complete) return {};  // all evidence present
+
+    return {
+      systemMessage: `QA evidence incomplete. Before approving this PR, you must produce the following evidence files in /workspace/ipc/qa-evidence/: ${missing.join(', ')}. Write each file as JSON with the required structure.`,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Missing QA evidence files: ${missing.join(', ')}`,
+      },
+    };
+  };
+}
+
+// --- CI gate ---
+
 function createCiGateHook(isMain: boolean): HookCallback {
   const timeoutMs = parseInt(process.env.CI_CHECK_TIMEOUT_MS ?? '600000', 10);
   const pollIntervalMs = 30_000;
@@ -724,7 +785,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain), createTestGateHook(containerInput.isMain), createCiGateHook(containerInput.isMain)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain), createTestGateHook(containerInput.isMain), createCiGateHook(containerInput.isMain), createQaEvidenceGateHook(containerInput.isMain)] }],
       },
     }
   })) {
@@ -845,6 +906,8 @@ async function main(): Promise<void> {
   try { fs.unlinkSync('/workspace/ipc/approach-posted.json'); } catch { /* ignore */ }
   // Clear stale test-passed marker from previous container runs
   try { fs.unlinkSync('/workspace/ipc/test-passed.json'); } catch { /* ignore */ }
+  // Clear stale QA evidence directory from previous container runs (T-29-10)
+  try { fs.rmSync('/workspace/ipc/qa-evidence', { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
