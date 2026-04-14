@@ -238,6 +238,21 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
+// --- API error classification ---
+
+export function classifyApiError(message: string): 'rate_limit' | 'auth' | 'budget' | 'other' {
+  const isRateLimitError = /rate.?limit|too many requests|429/i.test(message);
+  if (isRateLimitError) return 'rate_limit';
+
+  const isAuthError = /authentication_error|invalid.?api.?key|401\b/i.test(message);
+  if (isAuthError) return 'auth';
+
+  const isBudgetError = /budget|credit|billing|payment|quota|limit exceeded|overloaded|529|402/i.test(message);
+  if (isBudgetError) return 'budget';
+
+  return 'other';
+}
+
 // --- Gate enforcement (approach-must-come-first) ---
 
 export const APPROACH_BLOCKLIST = ["on it", "confirmed", "working on this", "acknowledged", "queued"];
@@ -758,9 +773,56 @@ async function main(): Promise<void> {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
 
-    // Detect budget/credit exhaustion and notify the channel before exiting
-    const isBudgetError = /budget|credit|billing|payment|quota|limit exceeded|overloaded|529|402/i.test(errorMessage);
-    if (isBudgetError) {
+    const errorType = classifyApiError(errorMessage);
+
+    if (errorType === 'rate_limit' || errorType === 'auth') {
+      // D-03: Friendly message for rate limit + auth errors
+      // D-04: No auto-retry — report and stop
+      // D-05: Friendly text as main message, raw JSON as thread reply
+      // D-06: Only rate limit + auth get this treatment
+      try {
+        const messagesDir = '/workspace/ipc/messages';
+        fs.mkdirSync(messagesDir, { recursive: true });
+
+        const friendlyText = errorType === 'rate_limit'
+          ? 'Fleet is at capacity — try again in a few minutes.'
+          : 'Fleet API key error — check Infisical credentials.';
+
+        // Main channel message (friendly)
+        const mainFilename = `${Date.now()}-${errorType}-friendly.json`;
+        const mainPayload = {
+          type: 'message',
+          chatJid: containerInput.chatJid,
+          text: friendlyText,
+          groupFolder: containerInput.groupFolder,
+          timestamp: new Date().toISOString(),
+        };
+        const mainTmp = `${messagesDir}/${mainFilename}.tmp`;
+        fs.writeFileSync(mainTmp, JSON.stringify(mainPayload, null, 2));
+        fs.renameSync(mainTmp, `${messagesDir}/${mainFilename}`);
+
+        // Thread reply with raw error for debugging (D-05)
+        if (containerInput.threadTs) {
+          const debugFilename = `${Date.now()}-${errorType}-debug.json`;
+          const debugPayload = {
+            type: 'message',
+            chatJid: containerInput.chatJid,
+            text: `Debug: ${errorMessage}`,
+            threadTs: containerInput.threadTs,
+            groupFolder: containerInput.groupFolder,
+            timestamp: new Date().toISOString(),
+          };
+          const debugTmp = `${messagesDir}/${debugFilename}.tmp`;
+          fs.writeFileSync(debugTmp, JSON.stringify(debugPayload, null, 2));
+          fs.renameSync(debugTmp, `${messagesDir}/${debugFilename}`);
+        }
+
+        log(`${errorType} error notification written to IPC messages`);
+      } catch (notifyErr) {
+        log(`Failed to write ${errorType} notification: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
+      }
+    } else if (errorType === 'budget') {
+      // Existing budget exhaustion handler — preserved exactly
       try {
         const messagesDir = '/workspace/ipc/messages';
         fs.mkdirSync(messagesDir, { recursive: true });
@@ -780,6 +842,7 @@ async function main(): Promise<void> {
         log(`Failed to write budget notification: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
       }
     }
+    // errorType === 'other' — no special handling, passes through as-is (D-06)
 
     writeOutput({
       status: 'error',
