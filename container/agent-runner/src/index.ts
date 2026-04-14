@@ -553,6 +553,7 @@ interface ParsedMessage {
 
 function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
+  let skippedLines = 0;
 
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
@@ -571,7 +572,12 @@ function parseTranscript(content: string): ParsedMessage[] {
         if (text) messages.push({ role: 'assistant', content: text });
       }
     } catch {
+      skippedLines++;
     }
+  }
+
+  if (skippedLines > 0) {
+    console.error(`[agent-runner] parseTranscript: skipped ${skippedLines} malformed lines`);
   }
 
   return messages;
