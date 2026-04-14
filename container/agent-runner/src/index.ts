@@ -17,11 +17,12 @@
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { exec as execCb } from 'child_process';
+import { exec as execCb, execFile as execFileCb } from 'child_process';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 const execAsync = promisify(execCb);
+const execFileAsync = promisify(execFileCb);
 
 interface ContainerInput {
   prompt: string;
@@ -425,17 +426,15 @@ function createCiGateHook(isMain: boolean): HookCallback {
     if (!command.includes('gh pr merge')) return {};
 
     const prNumber = extractPrNumber(command);
-    const repoMatch = command.match(/--repo\s+(\S+)/);
-    const repoFlag = repoMatch ? `--repo ${repoMatch[1]}` : '';
+    const repoMatch = command.match(/--repo\s+([\w.\-]+\/[\w.\-]+)/);
     const prArg = prNumber != null ? String(prNumber) : '';
 
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
       try {
-        const { stdout } = await execAsync(
-          `gh pr checks ${prArg} ${repoFlag} --json name,status,conclusion`.trim()
-        );
+        const args = ['pr', 'checks', ...(prArg ? [prArg] : []), ...(repoMatch ? ['--repo', repoMatch[1]] : []), '--json', 'name,status,conclusion'];
+        const { stdout } = await execFileAsync('gh', args);
         const checks = JSON.parse(stdout);
         const { allDone, allPassed } = parseCheckResults(checks);
 
