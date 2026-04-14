@@ -401,6 +401,61 @@ When addressed directly by name (e.g., "Blake needs X"):
 - Use numbered lists and tables for complex information
 - Keep responses concise — synthesize, don't summarize
 
+### Rebase Task Template
+
+When routing a rebase task to dev-team (for post-merge cascade or manual request), use this IPC message template. The post-rebase validation is MANDATORY — it prevents empty-diff PRs from `git rebase --onto` silently dropping commits.
+
+```
+@Fleet [DISPATCH-ROUTED] Post-merge rebase needed.
+
+PR: #{pr_number} ({branch_name})
+Base repo: {repo_owner}/{repo_name}
+
+A PR just merged to master. Please rebase this branch on top of the updated master:
+
+1. cd /workspace/extra/repos/{repo_name}
+2. git fetch origin
+3. git checkout {branch_name}
+4. git rebase origin/master
+   - If trivial conflicts (import ordering, whitespace only): resolve with `git rebase -X theirs` and continue
+   - If complex conflicts: run `git rebase --abort`, then post to Slack: "Rebase of {branch_name} has complex conflicts — human review needed." and STOP
+5. [MANDATORY POST-REBASE VALIDATION]
+   Run: COMMIT_COUNT=$(git rev-list master..HEAD --count)
+   If COMMIT_COUNT is 0: post to Slack "Branch {branch_name} has no unique commits above master — may already be merged." and STOP.
+   Run: git diff master...HEAD --stat
+   If output is EMPTY: post to Slack "Rebase resulted in empty diff — commits may have been dropped. Human review needed." Do NOT push. STOP.
+6. Push: git push --force-with-lease origin {branch_name}
+7. Wait for CI to complete. Check with: gh pr checks {pr_number} --repo {repo_owner}/{repo_name} --watch
+8. Post CI result to Slack: "Rebase of PR #{pr_number} complete. CI: {pass/fail}."
+```
+
+Replace `{pr_number}`, `{branch_name}`, `{repo_owner}/{repo_name}` with actual values when constructing the IPC message.
+
+### Post-Merge Cascade
+
+When a PR merge is detected (ticket moves to `done` in build loop state, or a human reports a merge in #dispatch), trigger a rebase cascade for all other open PRs on the same repo.
+
+**Detection:** During build loop poll (Task C), when a ticket transitions to `done` AND has a `pr_url`:
+1. Extract repo from `pr_url` (e.g., `Krewtrack/forcify` from `https://github.com/Krewtrack/forcify/pull/123`)
+2. Query all open PRs targeting master:
+   ```bash
+   gh pr list --repo {repo} --state open --json number,headRefName,baseRefName \
+     --jq '.[] | select(.baseRefName == "master") | {number, headRefName}'
+   ```
+3. For each open PR found:
+   - Check build loop state `in_flight[]` — if the PR's ticket is already `in_flight` with any active stage, skip (prevents duplicate work)
+   - Route a rebase task to dev-team using the **Rebase Task Template** above
+   - Route at most 2 rebase tasks per poll cycle to avoid IPC queue flooding (known IPC queue loss bug). Remaining PRs will be caught on the next poll cycle.
+4. Log to #dispatch: "Post-merge cascade: {N} open PRs detected on {repo}. Routing {M} rebase tasks to dev-team."
+
+**Manual trigger:** When a human posts "PR #{N} was merged" or similar merge notification:
+1. Extract repo and PR number
+2. Run the same cascade logic as above
+
+**Important:** Always check `in_flight[]` before routing to avoid sending duplicate rebase tasks for PRs that are already being worked on.
+
+**Build loop integration:** After posting "ready for merge" for a QA-passed ticket, the next build loop poll (Task C) should check if the PR was actually merged (poll GitHub PR state) and trigger the cascade if so. Do NOT trigger cascade on QA pass alone — wait for confirmed merge.
+
 ---
 
 ## IPC Message Routing Rules (MANDATORY)
