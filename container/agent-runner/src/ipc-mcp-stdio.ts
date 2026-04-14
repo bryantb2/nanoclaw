@@ -14,6 +14,16 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const APPROACH_MARKER_PATH = path.join(IPC_DIR, 'approach-posted.json');
+
+// Inlined from index.ts — must stay in sync with APPROACH_BLOCKLIST + isSubstantiveApproach there.
+const APPROACH_BLOCKLIST = ["on it", "confirmed", "working on this", "acknowledged", "queued"];
+
+function isSubstantiveApproach(text: string): boolean {
+  if (text.length <= 100) return false;
+  const lower = text.toLowerCase();
+  return !APPROACH_BLOCKLIST.some(phrase => lower.includes(phrase));
+}
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -61,6 +71,14 @@ server.tool(
     };
 
     writeIpcFile(MESSAGES_DIR, data);
+
+    // Write approach marker on first qualifying send_message (gate enforcement)
+    if (!isMain && isSubstantiveApproach(args.text) && !fs.existsSync(APPROACH_MARKER_PATH)) {
+      fs.writeFileSync(APPROACH_MARKER_PATH, JSON.stringify({
+        postedAt: new Date().toISOString(),
+        textLength: args.text.length,
+      }));
+    }
 
     return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
   },

@@ -238,6 +238,45 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
+// --- Gate enforcement (approach-must-come-first) ---
+
+export const APPROACH_BLOCKLIST = ["on it", "confirmed", "working on this", "acknowledged", "queued"];
+
+export function isSubstantiveApproach(text: string): boolean {
+  if (text.length <= 100) return false;
+  const lower = text.toLowerCase();
+  return !APPROACH_BLOCKLIST.some(phrase => lower.includes(phrase));
+}
+
+const APPROACH_MARKER_PATH = '/workspace/ipc/approach-posted.json';
+
+function createGateHook(isMain: boolean): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // D-13: dispatch exempt
+    if (input.hook_event_name !== 'PreToolUse') return {};
+
+    const toolName = (input as any).tool_name as string;
+    if (toolName !== 'Bash') return {};
+
+    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    if (!command.includes('git commit')) return {};
+
+    // Check if approach has been posted (marker file written by ipc-mcp-stdio.ts)
+    if (fs.existsSync(APPROACH_MARKER_PATH)) return {};
+
+    return {
+      systemMessage: 'You must post your implementation approach to Slack via send_message before writing any code. The message must be >100 characters and describe what you plan to do.',
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Approach not posted. Call send_message with your implementation plan (>100 chars) first.',
+      },
+    };
+  };
+}
+
+// --- End gate enforcement ---
+
 function createPreCompactHook(assistantName?: string): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
@@ -544,6 +583,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain)] }],
       },
     }
   })) {
@@ -660,6 +700,8 @@ async function main(): Promise<void> {
 
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  // Clear stale approach marker from previous container runs
+  try { fs.unlinkSync('/workspace/ipc/approach-posted.json'); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
