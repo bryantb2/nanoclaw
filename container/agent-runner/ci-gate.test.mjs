@@ -54,8 +54,8 @@ export function parseCheckResults(checks) {
  * Dispatch group (isMain=true) is exempt.
  * On infrastructure error (gh CLI fails), allows merge (fail-open).
  */
-export function createCiGateHook(isMain, execFn) {
-  const timeoutMs = 600_000; // 10 minutes default
+export function createCiGateHook(isMain, execFn, timeoutMs = 600_000) {
+  // timeoutMs parameter mirrors production's CI_CHECK_TIMEOUT_MS env var (default 600000)
   const pollIntervalMs = 30_000;
 
   return async (input) => {
