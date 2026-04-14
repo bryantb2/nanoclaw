@@ -122,6 +122,34 @@ fi
 
 **Never use `git push --force` without human authorization.** Force-push rewrites history and erases another agent's work silently.
 
+### Post-Rebase Validation (MANDATORY)
+
+After EVERY `git rebase` operation (whether dispatch-routed or self-initiated), run this validation before pushing. See **Post-Rebase Validation** — validation is mandatory after every rebase.
+
+1. **Check commit count:**
+   ```bash
+   COMMIT_COUNT=$(git rev-list master..HEAD --count 2>/dev/null || echo "0")
+   ```
+   If `COMMIT_COUNT` is `0`: post to Slack via send_message: "Branch has no unique commits above master — may already be merged or empty." Do NOT push. STOP.
+
+2. **Check diff is non-empty:**
+   ```bash
+   DIFF_STAT=$(git diff master...HEAD --stat 2>/dev/null)
+   ```
+   If `DIFF_STAT` is empty: post to Slack via send_message: "Rebase resulted in empty diff — commits may have been dropped. Human review needed." Do NOT push. STOP.
+
+3. **If both checks pass:** proceed with `git push --force-with-lease origin {branch_name}`
+
+**Conflict handling:**
+- Trivial conflicts (import ordering, whitespace only): resolve with `git rebase -X theirs` for the conflicting files, then re-run validation
+- Complex conflicts (logic changes, multiple hunks): run `git rebase --abort`, post to Slack: "Rebase of {branch_name} has complex conflicts — human review needed." STOP.
+
+**After push:** Always wait for CI to complete and post the result:
+```bash
+gh pr checks {pr_number} --repo {repo} --watch
+```
+Post to Slack: "Rebase of PR #{pr_number} complete. CI: {pass/fail}."
+
 ## Post-PR Protocol (MANDATORY)
 
 After opening ANY PR with `gh pr create`, you MUST complete ALL of the following before declaring the task done. A PR is NOT done until CI passes.
