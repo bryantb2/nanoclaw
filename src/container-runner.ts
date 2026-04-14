@@ -5,6 +5,7 @@
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 
 import {
   CONTAINER_IMAGE,
@@ -16,7 +17,11 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
-import { deleteInFlightTask, insertInFlightTask } from './db.js';
+import {
+  appendCompletionRecord,
+  deleteInFlightTask,
+  insertInFlightTask,
+} from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -54,6 +59,82 @@ function readIpcCostFile(groupFolder: string): IpcCostData | null {
     return data as IpcCostData;
   } catch {
     return null;
+  }
+}
+
+const CompletionRecordSchema = z.object({
+  linearTicketId: z.string().nullable().optional(),
+  prUrl: z.string().url().nullable().optional(),
+  branchName: z.string().nullable().optional(),
+  repo: z.string().nullable().optional(),
+  testPassCount: z.number().int().nonnegative().nullable().optional(),
+  testFailCount: z.number().int().nonnegative().nullable().optional(),
+  coverageBefore: z.number().min(0).max(100).nullable().optional(),
+  coverageAfter: z.number().min(0).max(100).nullable().optional(),
+  coverageDelta: z.number().nullable().optional(),
+  screenshotPaths: z.array(z.string()).nullable().optional(),
+  qaSignOffStatus: z
+    .enum(['approved', 'rejected', 'pending'])
+    .nullable()
+    .optional(),
+  costUsd: z.number().nonnegative(),
+  inputTokens: z.number().int().nonnegative().nullable().optional(),
+  outputTokens: z.number().int().nonnegative().nullable().optional(),
+  wallClockMs: z.number().int().nonnegative().nullable().optional(),
+  toolCallCount: z.number().int().nonnegative().nullable().optional(),
+  groupFolder: z.string(),
+  dispatchRouted: z.boolean().optional().default(false),
+  teamTask: z.boolean().optional().default(false),
+});
+
+/**
+ * Read and validate the completion-record.json IPC file written by the agent at container exit.
+ * D-09: malformed records are NOT persisted — validation failure is the "blocking" enforcement.
+ * The file is read and deleted whether valid or not (T-29-05: no leftover disk exposure).
+ */
+function readCompletionRecordFile(groupFolder: string, chatJid: string): void {
+  try {
+    const ipcDir = resolveGroupIpcPath(groupFolder);
+    const recordFile = path.join(ipcDir, 'completion-record.json');
+    if (!fs.existsSync(recordFile)) return;
+    const raw = JSON.parse(fs.readFileSync(recordFile, 'utf-8'));
+    fs.unlinkSync(recordFile);
+    const result = CompletionRecordSchema.safeParse(raw);
+    if (!result.success) {
+      // D-09: malformed records are NOT persisted — this is the "blocking" enforcement.
+      // The record is read and deleted but never inserted into completion_records.
+      logger.warn(
+        { groupFolder, error: result.error.message },
+        'Invalid completion record — skipping persistence (D-09)',
+      );
+      return;
+    }
+    const data = result.data;
+    appendCompletionRecord({
+      groupFolder,
+      chatJid,
+      linearTicketId: data.linearTicketId,
+      prUrl: data.prUrl,
+      branchName: data.branchName,
+      repo: data.repo,
+      testPassCount: data.testPassCount,
+      testFailCount: data.testFailCount,
+      coverageBefore: data.coverageBefore,
+      coverageAfter: data.coverageAfter,
+      coverageDelta: data.coverageDelta,
+      screenshotPaths: data.screenshotPaths,
+      qaSignOff: data.qaSignOffStatus,
+      costUsd: data.costUsd,
+      inputTokens: data.inputTokens,
+      outputTokens: data.outputTokens,
+      wallClockMs: data.wallClockMs,
+      toolCallCount: data.toolCallCount,
+      dispatchRouted: data.dispatchRouted,
+      teamTask: data.teamTask,
+    });
+    logger.info({ groupFolder }, 'Completion record persisted');
+  } catch (err) {
+    logger.warn({ groupFolder, err }, 'Failed to read completion record');
   }
 }
 
@@ -730,6 +811,7 @@ export async function runContainerAgent(
             currentQueryMaxComputedCost = 0;
             // Clean up stale IPC cost file from this run
             readIpcCostFile(group.folder);
+            readCompletionRecordFile(group.folder, input.chatJid);
             const cost = bestCost(
               accumulatedCostUsd,
               accumulatedComputedCost,
@@ -768,8 +850,8 @@ export async function runContainerAgent(
           result: null,
           error: `Container timed out after ${configTimeout}ms`,
           totalCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
-          computedCostUsd:
-            recovered.costUsd > 0 ? recovered.costUsd : undefined,
+          // Only set computedCostUsd when IPC recovery included token data (always token-computed)
+          computedCostUsd: recovered.tokenUsage ? recovered.costUsd : undefined,
           tokenUsage: recovered.tokenUsage,
         });
         return;
@@ -879,6 +961,7 @@ export async function runContainerAgent(
           accumulatedCostUsd === 0 && accumulatedComputedCost === 0
             ? readIpcCostFile(group.folder)
             : null;
+        readCompletionRecordFile(group.folder, input.chatJid);
         const errorCost = bestCost(
           accumulatedCostUsd,
           accumulatedComputedCost,
@@ -889,8 +972,13 @@ export async function runContainerAgent(
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
           totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+          // Only set computedCostUsd from token-computed sources, not SDK-reported cost
           computedCostUsd:
-            errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+            accumulatedComputedCost > 0
+              ? accumulatedComputedCost
+              : errorCost.tokenUsage
+                ? errorCost.costUsd
+                : undefined,
           tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
         return;
@@ -915,6 +1003,7 @@ export async function runContainerAgent(
           currentQueryMaxComputedCost = 0;
           // Clean up stale IPC cost file from this run
           readIpcCostFile(group.folder);
+          readCompletionRecordFile(group.folder, input.chatJid);
           const successCost = bestCost(
             accumulatedCostUsd,
             accumulatedComputedCost,

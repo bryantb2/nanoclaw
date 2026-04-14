@@ -52,6 +52,45 @@ When working on the forcify repo (`/workspace/extra/repos/forcify`):
 - Read `/workspace/extra/repos/forcify/AGENTS.md` — pattern catalog, key systems, quality gates
 - Follow the forcify gate steps before writing any code; the repo-specific gate extends the generic global gate with forcify-specific checks (sibling page patterns, test decision matrix, migration safety)
 
+## Pre-PR Test Gate
+
+Before creating any PR via `gh pr create`, you MUST write a test-passed marker file. The agent-runner enforces this — PR creation will be blocked if the marker is missing or invalid.
+
+### Workflow
+
+1. Run the full test suite: `npm test` (or project-specific test command)
+2. Capture the test results: pass count, fail count
+3. Measure coverage before your changes (baseline) and after your changes
+4. If all tests pass AND coverage did not regress, write the marker file:
+
+```bash
+cat > /workspace/ipc/test-passed.json << 'MARKER'
+{
+  "passed": true,
+  "testCount": 42,
+  "failCount": 0,
+  "coverageBefore": 82.3,
+  "coverageAfter": 83.1,
+  "coverageDelta": 0.8,
+  "passedAt": "2026-04-13T12:00:00.000Z"
+}
+MARKER
+```
+
+### Required Fields
+
+- **`passed`** (boolean, required): Must be `true`. If any test fails, do NOT write the marker.
+- **`coverageAfter`** (number, required): Coverage percentage after your changes.
+- **`coverageDelta`** (number, optional but checked): If present and negative, PR creation is blocked (coverage regression).
+- **`testCount`**, **`failCount`**, **`coverageBefore`**, **`passedAt`**: Recommended for traceability but not enforced by the gate.
+
+### Key Rules
+
+- The marker is automatically deleted on container startup — you must write it fresh each session.
+- Coverage regression (coverageDelta < 0) blocks PR creation even if all tests pass.
+- coverageDelta = 0 (same coverage) is allowed.
+- Dispatch group is exempt from this gate.
+
 ## Pre-PR Verification
 
 Before opening a PR, run the project's test suite locally to catch issues early — this saves a round-trip through QA and avoids back-and-forth on fixable problems.

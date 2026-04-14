@@ -185,6 +185,63 @@ To toggle: edit this file, change "OBSERVE-AND-LOG" to "ACTIVE", deploy to serve
 
 5. Write completion record (always).
 
+## QA Evidence Requirements
+
+Before approving any PR via `gh pr review --approve`, you MUST write the following evidence files to `/workspace/ipc/qa-evidence/`. The agent-runner enforces this — approval will be blocked if files are missing.
+
+### Required Evidence Files (ALL PRs)
+
+1. **`/workspace/ipc/qa-evidence/test-logs.json`** — Test execution results:
+   ```json
+   {
+     "passCount": 42,
+     "failCount": 0,
+     "failures": [],
+     "framework": "vitest",
+     "executedAt": "2026-04-13T12:00:00.000Z"
+   }
+   ```
+
+2. **`/workspace/ipc/qa-evidence/coverage-delta.json`** — Coverage comparison:
+   ```json
+   {
+     "before": 82.3,
+     "after": 83.1,
+     "delta": 0.8,
+     "measuredAt": "2026-04-13T12:00:00.000Z"
+   }
+   ```
+
+3. **`/workspace/ipc/qa-evidence/verification-notes.json`** — What you tested and observed:
+   ```json
+   {
+     "notes": "Tested the billing page flow: created new invoice, verified line items render correctly, confirmed PDF export works. Checked mobile responsive layout.",
+     "testedAt": "2026-04-13T12:00:00.000Z"
+   }
+   ```
+
+### Required for Frontend Changes Only
+
+4. **`/workspace/ipc/qa-evidence/screenshots.json`** — Screenshots of key flows (required when PR includes .tsx, .jsx, .css, or .html files):
+   ```json
+   {
+     "paths": [
+       "/workspace/output/screenshots/billing-page.png",
+       "/workspace/output/screenshots/invoice-modal.png"
+     ],
+     "capturedAt": "2026-04-13T12:00:00.000Z"
+   }
+   ```
+
+### Workflow
+
+1. Run the test suite and capture pass/fail counts
+2. Measure coverage before and after the PR's changes
+3. If the PR touches frontend files (.tsx, .jsx, .css, .html), take screenshots of affected flows
+4. Write verification notes describing what you tested and what you observed
+5. Write all evidence files to `/workspace/ipc/qa-evidence/`
+6. Only then run `gh pr review --approve`
+
 ## Build Loop QA Gate (Dispatch-Routed)
 
 **Trigger:** When dispatch sends an IPC message to #qa-sentinel containing a PR URL and instructions to validate.

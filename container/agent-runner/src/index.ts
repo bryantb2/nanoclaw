@@ -16,8 +16,13 @@
 
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
+import { exec as execCb, execFile as execFileCb } from 'child_process';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+
+const execAsync = promisify(execCb);
+const execFileAsync = promisify(execFileCb);
 
 interface ContainerInput {
   prompt: string;
@@ -264,16 +269,42 @@ export function isSubstantiveApproach(text: string): boolean {
 }
 
 const APPROACH_MARKER_PATH = '/workspace/ipc/approach-posted.json';
+const TEST_PASSED_MARKER_PATH = '/workspace/ipc/test-passed.json';
+
+export function validateTestPassedMarker(markerPath: string): boolean {
+  try {
+    const data = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
+    if (data.passed !== true) return false;
+    if (typeof data.coverageAfter !== 'number') return false;
+    if (typeof data.coverageDelta === 'number' && data.coverageDelta < 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface PreToolUseInput {
+  hook_event_name: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+}
+
+/** Safely narrow a hook input to PreToolUse shape, returning null if it doesn't match. */
+function asPreToolUse(input: unknown): PreToolUseInput | null {
+  const i = input as PreToolUseInput;
+  if (i.hook_event_name !== 'PreToolUse' || !i.tool_name) return null;
+  return i;
+}
 
 function createGateHook(isMain: boolean): HookCallback {
   return async (input, _toolUseId, _context) => {
     if (isMain) return {};  // D-13: dispatch exempt
-    if (input.hook_event_name !== 'PreToolUse') return {};
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
 
-    const toolName = (input as any).tool_name as string;
-    if (toolName !== 'Bash') return {};
+    if (ptu.tool_name !== 'Bash') return {};
 
-    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('git commit')) return {};
 
     // Check if approach has been posted (marker file written by ipc-mcp-stdio.ts)
@@ -285,6 +316,174 @@ function createGateHook(isMain: boolean): HookCallback {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason: 'Approach not posted. Call send_message with your implementation plan (>100 chars) first.',
+      },
+    };
+  };
+}
+
+function createTestGateHook(isMain: boolean): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // D-04: dispatch exempt
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
+
+    if (ptu.tool_name !== 'Bash') return {};
+
+    const command = (ptu.tool_input?.command as string) ?? '';
+    if (!command.includes('gh pr create')) return {};
+
+    if (fs.existsSync(TEST_PASSED_MARKER_PATH) && validateTestPassedMarker(TEST_PASSED_MARKER_PATH)) return {};
+
+    return {
+      systemMessage: 'You must run tests and ensure coverage does not regress before creating a PR. Run the test suite, capture before/after coverage, and write test-passed.json to /workspace/ipc/ with: { "passed": true, "testCount": N, "failCount": 0, "coverageBefore": X, "coverageAfter": Y, "coverageDelta": D, "passedAt": "ISO timestamp" }',
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Tests not passed or coverage regressed. Run tests, verify coverage >= baseline, write /workspace/ipc/test-passed.json.',
+      },
+    };
+  };
+}
+
+function extractPrNumber(command: string): number | null {
+  // Try flags-before-number pattern: gh pr merge --squash --delete-branch 42
+  const match = command.match(/gh\s+pr\s+merge(?:\s+--\S+)*\s+(\d+)/);
+  if (match) return parseInt(match[1], 10);
+  // Try number-before-flags pattern: gh pr merge 42 --squash
+  const simpleMatch = command.match(/gh\s+pr\s+merge\s+(\d+)/);
+  if (simpleMatch) return parseInt(simpleMatch[1], 10);
+  return null;  // No number = use current branch PR
+}
+
+function parseCheckResults(checks: Array<{ status: string; conclusion: string }>): { allDone: boolean; allPassed: boolean } {
+  const allDone = checks.every(c => c.status === 'COMPLETED');
+  const allPassed = allDone && checks.every(c =>
+    c.conclusion === 'SUCCESS' || c.conclusion === 'SKIPPED' || c.conclusion === 'NEUTRAL'
+  );
+  return { allDone, allPassed };
+}
+
+// --- QA evidence gate ---
+
+const QA_EVIDENCE_DIR = '/workspace/ipc/qa-evidence';
+const REQUIRED_EVIDENCE_ALWAYS = ['test-logs.json', 'coverage-delta.json', 'verification-notes.json'];
+const FRONTEND_EXTENSIONS_QA = ['.tsx', '.jsx', '.css', '.html'];
+
+function isFrontendChange(changedFiles: string[]): boolean {
+  return changedFiles.some(f => FRONTEND_EXTENSIONS_QA.some(ext => f.endsWith(ext)));
+}
+
+function getRequiredEvidenceFiles(isFrontend: boolean): string[] {
+  return isFrontend
+    ? [...REQUIRED_EVIDENCE_ALWAYS, 'screenshots.json']
+    : [...REQUIRED_EVIDENCE_ALWAYS];
+}
+
+function checkQaEvidence(evidenceDir: string, isFrontend: boolean): { complete: boolean; missing: string[] } {
+  const required = getRequiredEvidenceFiles(isFrontend);
+  const missing = required.filter(f => !fs.existsSync(path.join(evidenceDir, f)));
+  return { complete: missing.length === 0, missing };
+}
+
+function createQaEvidenceGateHook(isMain: boolean): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // dispatch exempt
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
+
+    if (ptu.tool_name !== 'Bash') return {};
+
+    const command = (ptu.tool_input?.command as string) ?? '';
+    if (!command.includes('gh pr review')) return {};
+    if (!command.includes('--approve')) return {};
+
+    // Detect frontend changes
+    let isFrontend = false;
+    try {
+      const { stdout } = await execAsync('git diff --name-only origin/master...HEAD');
+      const changedFiles = stdout.trim().split('\n').filter(Boolean);
+      isFrontend = isFrontendChange(changedFiles);
+    } catch {
+      // If git diff fails, assume non-frontend (conservative)
+    }
+
+    const { complete, missing } = checkQaEvidence(QA_EVIDENCE_DIR, isFrontend);
+
+    if (complete) return {};  // all evidence present
+
+    return {
+      systemMessage: `QA evidence incomplete. Before approving this PR, you must produce the following evidence files in /workspace/ipc/qa-evidence/: ${missing.join(', ')}. Write each file as JSON with the required structure.`,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Missing QA evidence files: ${missing.join(', ')}`,
+      },
+    };
+  };
+}
+
+// --- CI gate ---
+
+function createCiGateHook(isMain: boolean): HookCallback {
+  const timeoutMs = parseInt(process.env.CI_CHECK_TIMEOUT_MS ?? '600000', 10);
+  const pollIntervalMs = 30_000;
+
+  return async (input, _toolUseId, _context) => {
+    if (isMain) return {};  // dispatch exempt
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
+
+    if (ptu.tool_name !== 'Bash') return {};
+
+    const command = (ptu.tool_input?.command as string) ?? '';
+    if (!command.includes('gh pr merge')) return {};
+
+    const prNumber = extractPrNumber(command);
+    const repoMatch = command.match(/--repo\s+([\w.\-]+\/[\w.\-]+)/);
+    const prArg = prNumber != null ? String(prNumber) : '';
+
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      try {
+        const args = ['pr', 'checks', ...(prArg ? [prArg] : []), ...(repoMatch ? ['--repo', repoMatch[1]] : []), '--json', 'name,status,conclusion'];
+        const { stdout } = await execFileAsync('gh', args);
+        const checks = JSON.parse(stdout);
+        const { allDone, allPassed } = parseCheckResults(checks);
+
+        if (allDone) {
+          if (allPassed) return {};  // allow merge
+          const failing = checks
+            .filter((c: any) => c.conclusion !== 'SUCCESS' && c.conclusion !== 'SKIPPED' && c.conclusion !== 'NEUTRAL')
+            .map((c: any) => c.name)
+            .join(', ');
+          return {
+            systemMessage: `CI checks failed. Do not merge this PR. Review the failing checks and fix them first.`,
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason: `CI checks failed: ${failing}`,
+            },
+          };
+        }
+
+        // CI still running — poll
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      } catch (err) {
+        // gh pr checks failed (no checks configured, network error, etc.)
+        // Fail-open: allow merge and log warning — don't block on infrastructure failures
+        console.warn(`[ci-gate] gh pr checks failed: ${err}. Allowing merge.`);
+        return {};
+      }
+    }
+
+    // Timeout expired
+    return {
+      systemMessage: `CI checks timed out after ${timeoutMs / 1000}s. Post the CI status to Slack and do NOT merge. Wait for CI to complete or investigate why checks are stuck.`,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `CI checks still running after ${timeoutMs / 1000}s timeout. Post status to Slack.`,
       },
     };
   };
@@ -354,6 +553,7 @@ interface ParsedMessage {
 
 function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
+  let skippedLines = 0;
 
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
@@ -372,7 +572,12 @@ function parseTranscript(content: string): ParsedMessage[] {
         if (text) messages.push({ role: 'assistant', content: text });
       }
     } catch {
+      skippedLines++;
     }
+  }
+
+  if (skippedLines > 0) {
+    console.error(`[agent-runner] parseTranscript: skipped ${skippedLines} malformed lines`);
   }
 
   return messages;
@@ -598,7 +803,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createGateHook(containerInput.isMain), createTestGateHook(containerInput.isMain), createCiGateHook(containerInput.isMain), createQaEvidenceGateHook(containerInput.isMain)] }],
       },
     }
   })) {
@@ -717,6 +922,10 @@ async function main(): Promise<void> {
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
   // Clear stale approach marker from previous container runs
   try { fs.unlinkSync('/workspace/ipc/approach-posted.json'); } catch { /* ignore */ }
+  // Clear stale test-passed marker from previous container runs
+  try { fs.unlinkSync('/workspace/ipc/test-passed.json'); } catch { /* ignore */ }
+  // Clear stale QA evidence directory from previous container runs (T-29-10)
+  try { fs.rmSync('/workspace/ipc/qa-evidence', { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;

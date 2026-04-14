@@ -100,6 +100,33 @@ function createSchema(database: Database.Database): void {
       cost_usd REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_cost_log_run_at ON cost_log(run_at);
+
+    CREATE TABLE IF NOT EXISTS completion_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      run_at TEXT NOT NULL DEFAULT (datetime('now')),
+      linear_ticket_id TEXT,
+      pr_url TEXT,
+      branch_name TEXT,
+      repo TEXT,
+      test_pass_count INTEGER,
+      test_fail_count INTEGER,
+      coverage_before REAL,
+      coverage_after REAL,
+      coverage_delta REAL,
+      screenshot_paths TEXT,
+      qa_sign_off TEXT,
+      cost_usd REAL NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      wall_clock_ms INTEGER,
+      tool_call_count INTEGER,
+      dispatch_routed INTEGER DEFAULT 0,
+      team_task INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_completion_records_run_at ON completion_records(run_at);
+    CREATE INDEX IF NOT EXISTS idx_completion_records_group ON completion_records(group_folder);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -467,7 +494,8 @@ export function updateMessageContent(
 }
 
 /**
- * Store a message directly.
+ * Store a message directly — delegates to storeMessage to avoid SQL duplication.
+ * Accepts an inline type for callers that don't import NewMessage.
  */
 export function storeMessageDirect(msg: {
   id: string;
@@ -480,19 +508,7 @@ export function storeMessageDirect(msg: {
   is_bot_message?: boolean;
   origin?: MessageOrigin;
 }): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
-    msg.origin ?? 'webhook',
-  );
+  storeMessage(msg as NewMessage);
 }
 
 export function getNewMessages(
@@ -973,6 +989,61 @@ export function appendCostLog(
     details?.cacheCreationTokens ?? 0,
     details?.cacheReadTokens ?? 0,
     details?.costSource ?? 'sdk',
+  );
+}
+
+export interface CompletionRecordInput {
+  groupFolder: string;
+  chatJid: string;
+  linearTicketId?: string | null;
+  prUrl?: string | null;
+  branchName?: string | null;
+  repo?: string | null;
+  testPassCount?: number | null;
+  testFailCount?: number | null;
+  coverageBefore?: number | null;
+  coverageAfter?: number | null;
+  coverageDelta?: number | null;
+  screenshotPaths?: string[] | null;
+  qaSignOff?: 'approved' | 'rejected' | 'pending' | null;
+  costUsd: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  wallClockMs?: number | null;
+  toolCallCount?: number | null;
+  dispatchRouted?: boolean;
+  teamTask?: boolean;
+}
+
+export function appendCompletionRecord(record: CompletionRecordInput): void {
+  db.prepare(
+    `INSERT INTO completion_records (
+      group_folder, chat_jid, run_at, linear_ticket_id, pr_url, branch_name, repo,
+      test_pass_count, test_fail_count, coverage_before, coverage_after, coverage_delta,
+      screenshot_paths, qa_sign_off, cost_usd, input_tokens, output_tokens,
+      wall_clock_ms, tool_call_count, dispatch_routed, team_task
+    ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.groupFolder,
+    record.chatJid,
+    record.linearTicketId ?? null,
+    record.prUrl ?? null,
+    record.branchName ?? null,
+    record.repo ?? null,
+    record.testPassCount ?? null,
+    record.testFailCount ?? null,
+    record.coverageBefore ?? null,
+    record.coverageAfter ?? null,
+    record.coverageDelta ?? null,
+    record.screenshotPaths ? JSON.stringify(record.screenshotPaths) : null,
+    record.qaSignOff ?? null,
+    record.costUsd,
+    record.inputTokens ?? null,
+    record.outputTokens ?? null,
+    record.wallClockMs ?? null,
+    record.toolCallCount ?? null,
+    record.dispatchRouted ? 1 : 0,
+    record.teamTask ? 1 : 0,
   );
 }
 

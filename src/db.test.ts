@@ -8,6 +8,7 @@ import {
   _initFileDatabaseForTest,
   _getDb,
   _runMigrationsForTest,
+  appendCompletionRecord,
   appendCostLog,
   createTask,
   deleteTask,
@@ -1407,5 +1408,168 @@ describe('updateMessageContent (Slack message_changed handler)', () => {
     expect(row.timestamp).toBe('2026-04-11T00:00:00.000Z');
     expect(row.is_from_me).toBe(0);
     expect(row.is_bot_message).toBe(0);
+  });
+});
+
+// --- completion_records ---
+
+describe('appendCompletionRecord', () => {
+  it('Test 1: completion_records table exists after createSchema()', () => {
+    const db = _getDb();
+    const row = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='completion_records'`,
+      )
+      .get() as { name: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.name).toBe('completion_records');
+  });
+
+  it('Test 2: inserts a row with all required fields populated', () => {
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.0123,
+      prUrl: 'https://github.com/org/repo/pull/42',
+      branchName: 'feat/my-feature',
+      repo: 'org/repo',
+      linearTicketId: 'ENG-99',
+      testPassCount: 10,
+      testFailCount: 0,
+      coverageBefore: 80.5,
+      coverageAfter: 82.0,
+      coverageDelta: 1.5,
+      screenshotPaths: ['/tmp/screen1.png'],
+      qaSignOff: 'approved',
+      inputTokens: 1000,
+      outputTokens: 500,
+      wallClockMs: 30000,
+      toolCallCount: 15,
+      dispatchRouted: true,
+      teamTask: false,
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM completion_records WHERE group_folder = ?')
+      .get('dev-team') as Record<string, unknown> | undefined;
+    expect(row).toBeDefined();
+    expect(row!.group_folder).toBe('dev-team');
+    expect(row!.chat_jid).toBe('slack:C123');
+    expect(row!.pr_url).toBe('https://github.com/org/repo/pull/42');
+    expect(row!.linear_ticket_id).toBe('ENG-99');
+  });
+
+  it('Test 3: stores correct types (cost_usd as REAL, test_pass_count as INTEGER, etc.)', () => {
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.0555,
+      testPassCount: 7,
+      testFailCount: 2,
+      coverageBefore: 75.0,
+      coverageAfter: 78.5,
+      coverageDelta: 3.5,
+      inputTokens: 2000,
+      outputTokens: 800,
+      wallClockMs: 45000,
+      toolCallCount: 20,
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM completion_records WHERE group_folder = ?')
+      .get('dev-team') as Record<string, unknown>;
+    expect(typeof row.cost_usd).toBe('number');
+    expect(row.cost_usd).toBeCloseTo(0.0555);
+    expect(typeof row.test_pass_count).toBe('number');
+    expect(row.test_pass_count).toBe(7);
+    expect(typeof row.test_fail_count).toBe('number');
+    expect(row.test_fail_count).toBe(2);
+    expect(typeof row.coverage_before).toBe('number');
+    expect(row.coverage_before).toBeCloseTo(75.0);
+  });
+
+  it('Test 4: handles nullable fields (linear_ticket_id=null, screenshot_paths=null)', () => {
+    appendCompletionRecord({
+      groupFolder: 'qa-sentinel',
+      chatJid: 'slack:C456',
+      costUsd: 0.001,
+      linearTicketId: null,
+      screenshotPaths: null,
+      prUrl: null,
+      branchName: null,
+      repo: null,
+      testPassCount: null,
+      testFailCount: null,
+      coverageBefore: null,
+      coverageAfter: null,
+      coverageDelta: null,
+      qaSignOff: null,
+      inputTokens: null,
+      outputTokens: null,
+      wallClockMs: null,
+      toolCallCount: null,
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT * FROM completion_records WHERE group_folder = ?')
+      .get('qa-sentinel') as Record<string, unknown>;
+    expect(row.linear_ticket_id).toBeNull();
+    expect(row.screenshot_paths).toBeNull();
+    expect(row.pr_url).toBeNull();
+    expect(row.branch_name).toBeNull();
+  });
+
+  it('Test 5: stores screenshot_paths as JSON string array', () => {
+    const paths = ['/tmp/screen1.png', '/tmp/screen2.png'];
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.002,
+      screenshotPaths: paths,
+    });
+
+    const db = _getDb();
+    const row = db
+      .prepare('SELECT screenshot_paths FROM completion_records WHERE group_folder = ?')
+      .get('dev-team') as Record<string, unknown>;
+    expect(typeof row.screenshot_paths).toBe('string');
+    expect(JSON.parse(row.screenshot_paths as string)).toEqual(paths);
+  });
+
+  it('Test 6: multiple completion records for same group are all persisted (no upsert)', () => {
+    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.01 });
+    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.02 });
+    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.03 });
+
+    const db = _getDb();
+    const rows = db
+      .prepare('SELECT * FROM completion_records WHERE group_folder = ?')
+      .all('dev-team') as Record<string, unknown>[];
+    expect(rows).toHaveLength(3);
+  });
+
+  it('Test 7: idx_completion_records_run_at index exists', () => {
+    const db = _getDb();
+    const row = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='completion_records' AND name='idx_completion_records_run_at'`,
+      )
+      .get() as { name: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.name).toBe('idx_completion_records_run_at');
+  });
+
+  it('Test 8: idx_completion_records_group index exists', () => {
+    const db = _getDb();
+    const row = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='completion_records' AND name='idx_completion_records_group'`,
+      )
+      .get() as { name: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.name).toBe('idx_completion_records_group');
   });
 });
