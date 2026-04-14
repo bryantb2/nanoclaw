@@ -283,15 +283,28 @@ export function validateTestPassedMarker(markerPath: string): boolean {
   }
 }
 
+interface PreToolUseInput {
+  hook_event_name: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+}
+
+/** Safely narrow a hook input to PreToolUse shape, returning null if it doesn't match. */
+function asPreToolUse(input: unknown): PreToolUseInput | null {
+  const i = input as PreToolUseInput;
+  if (i.hook_event_name !== 'PreToolUse' || !i.tool_name) return null;
+  return i;
+}
+
 function createGateHook(isMain: boolean): HookCallback {
   return async (input, _toolUseId, _context) => {
     if (isMain) return {};  // D-13: dispatch exempt
-    if (input.hook_event_name !== 'PreToolUse') return {};
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
 
-    const toolName = (input as any).tool_name as string;
-    if (toolName !== 'Bash') return {};
+    if (ptu.tool_name !== 'Bash') return {};
 
-    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('git commit')) return {};
 
     // Check if approach has been posted (marker file written by ipc-mcp-stdio.ts)
@@ -311,12 +324,12 @@ function createGateHook(isMain: boolean): HookCallback {
 function createTestGateHook(isMain: boolean): HookCallback {
   return async (input, _toolUseId, _context) => {
     if (isMain) return {};  // D-04: dispatch exempt
-    if (input.hook_event_name !== 'PreToolUse') return {};
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
 
-    const toolName = (input as any).tool_name as string;
-    if (toolName !== 'Bash') return {};
+    if (ptu.tool_name !== 'Bash') return {};
 
-    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('gh pr create')) return {};
 
     if (fs.existsSync(TEST_PASSED_MARKER_PATH) && validateTestPassedMarker(TEST_PASSED_MARKER_PATH)) return {};
@@ -375,12 +388,12 @@ function checkQaEvidence(evidenceDir: string, isFrontend: boolean): { complete: 
 function createQaEvidenceGateHook(isMain: boolean): HookCallback {
   return async (input, _toolUseId, _context) => {
     if (isMain) return {};  // dispatch exempt
-    if (input.hook_event_name !== 'PreToolUse') return {};
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
 
-    const toolName = (input as any).tool_name as string;
-    if (toolName !== 'Bash') return {};
+    if (ptu.tool_name !== 'Bash') return {};
 
-    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('gh pr review')) return {};
     if (!command.includes('--approve')) return {};
 
@@ -417,12 +430,12 @@ function createCiGateHook(isMain: boolean): HookCallback {
 
   return async (input, _toolUseId, _context) => {
     if (isMain) return {};  // dispatch exempt
-    if (input.hook_event_name !== 'PreToolUse') return {};
+    const ptu = asPreToolUse(input);
+    if (!ptu) return {};
 
-    const toolName = (input as any).tool_name as string;
-    if (toolName !== 'Bash') return {};
+    if (ptu.tool_name !== 'Bash') return {};
 
-    const command = ((input as any).tool_input as Record<string, unknown>)?.command as string ?? '';
+    const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('gh pr merge')) return {};
 
     const prNumber = extractPrNumber(command);
