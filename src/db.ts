@@ -494,7 +494,8 @@ export function updateMessageContent(
 }
 
 /**
- * Store a message directly.
+ * Store a message directly — delegates to storeMessage to avoid SQL duplication.
+ * Accepts an inline type for callers that don't import NewMessage.
  */
 export function storeMessageDirect(msg: {
   id: string;
@@ -507,19 +508,7 @@ export function storeMessageDirect(msg: {
   is_bot_message?: boolean;
   origin?: MessageOrigin;
 }): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
-    msg.origin ?? 'webhook',
-  );
+  storeMessage(msg as NewMessage);
 }
 
 export function getNewMessages(
