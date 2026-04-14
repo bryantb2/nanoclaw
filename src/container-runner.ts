@@ -17,7 +17,11 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
-import { appendCompletionRecord, deleteInFlightTask, insertInFlightTask } from './db.js';
+import {
+  appendCompletionRecord,
+  deleteInFlightTask,
+  insertInFlightTask,
+} from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -69,7 +73,10 @@ const CompletionRecordSchema = z.object({
   coverageAfter: z.number().min(0).max(100).nullable().optional(),
   coverageDelta: z.number().nullable().optional(),
   screenshotPaths: z.array(z.string()).nullable().optional(),
-  qaSignOffStatus: z.enum(['approved', 'rejected', 'pending']).nullable().optional(),
+  qaSignOffStatus: z
+    .enum(['approved', 'rejected', 'pending'])
+    .nullable()
+    .optional(),
   costUsd: z.number().nonnegative(),
   inputTokens: z.number().int().nonnegative().nullable().optional(),
   outputTokens: z.number().int().nonnegative().nullable().optional(),
@@ -843,8 +850,8 @@ export async function runContainerAgent(
           result: null,
           error: `Container timed out after ${configTimeout}ms`,
           totalCostUsd: recovered.costUsd > 0 ? recovered.costUsd : undefined,
-          computedCostUsd:
-            recovered.costUsd > 0 ? recovered.costUsd : undefined,
+          // Only set computedCostUsd when IPC recovery included token data (always token-computed)
+          computedCostUsd: recovered.tokenUsage ? recovered.costUsd : undefined,
           tokenUsage: recovered.tokenUsage,
         });
         return;
@@ -965,8 +972,13 @@ export async function runContainerAgent(
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
           totalCostUsd: errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+          // Only set computedCostUsd from token-computed sources, not SDK-reported cost
           computedCostUsd:
-            errorCost.costUsd > 0 ? errorCost.costUsd : undefined,
+            accumulatedComputedCost > 0
+              ? accumulatedComputedCost
+              : errorCost.tokenUsage
+                ? errorCost.costUsd
+                : undefined,
           tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
         });
         return;
