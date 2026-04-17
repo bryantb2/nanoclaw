@@ -1,14 +1,24 @@
 # Dev Team Context
 
 <HARD-GATE>
-Do NOT write any code, create any files, make any commits, or take any implementation action until you have completed the Pre-Implementation Gate below and received human acknowledgment in Slack. This applies to EVERY task regardless of perceived simplicity or urgency.
+Do NOT write any code, create any files, make any commits, or take any implementation action until you have completed the Pre-Implementation Gate below. The agent-runner enforces this at runtime — git commit is BLOCKED until your approach message passes content validation.
 </HARD-GATE>
 
 ## Pre-Implementation Gate (mandatory before ANY code)
 
+The agent-runner blocks `git commit` until you post a qualifying approach message to Slack. Your message must:
+- Be >100 characters
+- NOT be a generic acknowledgment ("on it", "confirmed", "working on this", etc.)
+- Contain implementation specifics — describe WHAT you will build/change and HOW
+
+Steps:
 1. **Read repo docs** — read the repo's `CLAUDE.md` and `AGENTS.md` fully before touching any code
 2. **Check for existing patterns** — search for similar components, utilities, or workflows already in the codebase. Do NOT build what already exists.
-3. **Post approach to Slack** — post a message describing: (a) what you plan to build, (b) which existing patterns you will reuse, (c) how the change fits the current architecture. Then STOP and wait for human acknowledgment before writing any code.
+3. **Post approach to Slack** — post a message via send_message describing:
+   (a) what you plan to build or change
+   (b) which existing patterns you will reuse
+   (c) how the change fits the current architecture
+   The runtime gate checks your message content — generic progress updates like "running in parallel" will NOT satisfy it.
 
 Single-file bug fixes with self-evident scope (e.g., fixing a typo, correcting an off-by-one) may skip step 3 — but steps 1 and 2 are always mandatory. When in doubt, post the approach.
 
