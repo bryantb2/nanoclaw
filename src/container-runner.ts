@@ -88,11 +88,79 @@ const CompletionRecordSchema = z.object({
 });
 
 /**
+ * Runtime override data the orchestrator computes during a container run that
+ * the agent itself cannot self-measure (SDK doesn't expose total cost/tokens
+ * to the agent's process). When supplied, these values override any 0/missing
+ * values the agent wrote into completion-record.json — fixing the "all zeros"
+ * problem where the agent dutifully writes the field with no real data.
+ */
+export interface CompletionRecordRuntimeOverrides {
+  costUsd?: number;
+  tokenUsage?: TokenUsage;
+  wallClockMs?: number;
+}
+
+/**
+ * Pure merge: prefer runtime override values when they're present and non-zero;
+ * fall back to agent-supplied values otherwise. Exported for unit testing.
+ *
+ * Why this exists: the agent has no SDK access to its own cost/tokens, so its
+ * `completion-record.json` writes 0 for cost/tokens/wallClock. The orchestrator
+ * has real values from the streaming output. This merge picks the best of both.
+ */
+export function mergeCompletionRecordRuntime(
+  agent: {
+    costUsd?: number;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    wallClockMs?: number | null;
+  },
+  runtime?: CompletionRecordRuntimeOverrides,
+): {
+  costUsd: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  wallClockMs: number | null;
+} {
+  const pickNumber = (
+    runtimeVal: number | undefined,
+    agentVal: number | undefined | null,
+  ): number | null => {
+    if (runtimeVal !== undefined && runtimeVal > 0) return runtimeVal;
+    return agentVal ?? null;
+  };
+  return {
+    costUsd:
+      runtime?.costUsd !== undefined && runtime.costUsd > 0
+        ? runtime.costUsd
+        : (agent.costUsd ?? 0),
+    inputTokens: pickNumber(
+      runtime?.tokenUsage?.inputTokens,
+      agent.inputTokens,
+    ),
+    outputTokens: pickNumber(
+      runtime?.tokenUsage?.outputTokens,
+      agent.outputTokens,
+    ),
+    wallClockMs: pickNumber(runtime?.wallClockMs, agent.wallClockMs),
+  };
+}
+
+/**
  * Read and validate the completion-record.json IPC file written by the agent at container exit.
  * D-09: malformed records are NOT persisted — validation failure is the "blocking" enforcement.
  * The file is read and deleted whether valid or not (T-29-05: no leftover disk exposure).
+ *
+ * `runtime` overrides agent-supplied cost/token/wallClock values. The agent has no SDK
+ * access to its own cost/tokens so it writes 0; the orchestrator has real values from
+ * the streaming output. We prefer the runtime values when they're present and non-zero.
  */
-function readCompletionRecordFile(groupFolder: string, chatJid: string): void {
+/** @internal — exported for testing the runtime-override merge logic. */
+export function readCompletionRecordFile(
+  groupFolder: string,
+  chatJid: string,
+  runtime?: CompletionRecordRuntimeOverrides,
+): void {
   try {
     const ipcDir = resolveGroupIpcPath(groupFolder);
     const recordFile = path.join(ipcDir, 'completion-record.json');
@@ -110,6 +178,7 @@ function readCompletionRecordFile(groupFolder: string, chatJid: string): void {
       return;
     }
     const data = result.data;
+    const merged = mergeCompletionRecordRuntime(data, runtime);
     appendCompletionRecord({
       groupFolder,
       chatJid,
@@ -124,15 +193,22 @@ function readCompletionRecordFile(groupFolder: string, chatJid: string): void {
       coverageDelta: data.coverageDelta,
       screenshotPaths: data.screenshotPaths,
       qaSignOff: data.qaSignOffStatus,
-      costUsd: data.costUsd,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      wallClockMs: data.wallClockMs,
+      costUsd: merged.costUsd,
+      inputTokens: merged.inputTokens,
+      outputTokens: merged.outputTokens,
+      wallClockMs: merged.wallClockMs,
       toolCallCount: data.toolCallCount,
       dispatchRouted: data.dispatchRouted,
       teamTask: data.teamTask,
     });
-    logger.info({ groupFolder }, 'Completion record persisted');
+    logger.info(
+      {
+        groupFolder,
+        costUsd: merged.costUsd,
+        runtimeOverride: runtime !== undefined,
+      },
+      'Completion record persisted',
+    );
   } catch (err) {
     logger.warn({ groupFolder, err }, 'Failed to read completion record');
   }
@@ -811,12 +887,18 @@ export async function runContainerAgent(
             currentQueryMaxComputedCost = 0;
             // Clean up stale IPC cost file from this run
             readIpcCostFile(group.folder);
-            readCompletionRecordFile(group.folder, input.chatJid);
             const cost = bestCost(
               accumulatedCostUsd,
               accumulatedComputedCost,
               null,
             );
+            // Pass runtime cost/tokens/duration so completion-record.json's
+            // 0-valued cost/token fields get overridden with real data.
+            readCompletionRecordFile(group.folder, input.chatJid, {
+              costUsd: cost.costUsd,
+              tokenUsage: lastTokenUsage,
+              wallClockMs: duration,
+            });
             resolve({
               status: 'success',
               result: null,
@@ -961,12 +1043,18 @@ export async function runContainerAgent(
           accumulatedCostUsd === 0 && accumulatedComputedCost === 0
             ? readIpcCostFile(group.folder)
             : null;
-        readCompletionRecordFile(group.folder, input.chatJid);
         const errorCost = bestCost(
           accumulatedCostUsd,
           accumulatedComputedCost,
           ipcCostOnError,
         );
+        // Pass runtime cost/tokens/duration so completion-record.json's
+        // 0-valued cost/token fields get overridden with real data.
+        readCompletionRecordFile(group.folder, input.chatJid, {
+          costUsd: errorCost.costUsd,
+          tokenUsage: lastTokenUsage ?? errorCost.tokenUsage,
+          wallClockMs: duration,
+        });
         resolve({
           status: 'error',
           result: null,
@@ -1003,12 +1091,18 @@ export async function runContainerAgent(
           currentQueryMaxComputedCost = 0;
           // Clean up stale IPC cost file from this run
           readIpcCostFile(group.folder);
-          readCompletionRecordFile(group.folder, input.chatJid);
           const successCost = bestCost(
             accumulatedCostUsd,
             accumulatedComputedCost,
             null,
           );
+          // Pass runtime cost/tokens/duration so completion-record.json's
+          // 0-valued cost/token fields get overridden with real data.
+          readCompletionRecordFile(group.folder, input.chatJid, {
+            costUsd: successCost.costUsd,
+            tokenUsage: lastTokenUsage,
+            wallClockMs: duration,
+          });
           resolve({
             status: 'success',
             result: null,
