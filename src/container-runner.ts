@@ -25,6 +25,7 @@ import {
   insertInFlightTask,
   storeMessage,
 } from './db.js';
+import { resolveGoogleServiceAccountJson } from './google-service-account-env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -734,9 +735,8 @@ export async function runContainerAgent(
     extraEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.LINEAR_API_KEY)
     extraEnv.LINEAR_API_KEY = process.env.LINEAR_API_KEY;
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
-    extraEnv.GOOGLE_SERVICE_ACCOUNT_JSON =
-      process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const googleSaJson = resolveGoogleServiceAccountJson(process.env);
+  if (googleSaJson) extraEnv.GOOGLE_SERVICE_ACCOUNT_JSON = googleSaJson;
   // Pass GitHub App credentials so the container can generate fresh
   // installation tokens on demand (tokens expire after 1 hour).
   if (process.env.GITHUB_APP_PRIVATE_KEY) {
