@@ -77,6 +77,14 @@ export interface InjectIpcMessageDeps {
  * Inject an IPC-routed message into the DB and wake the target group's
  * poller. The injected row uses `realTs` as its `messages.id` when supplied
  * (Option B threading) or a synthetic id otherwise (Option A fallback).
+ *
+ * `sameGroupSelfEmission` controls whether to wake the queue. When true
+ * (the agent posted to its own group's channel via send_message), the
+ * queue wake-up is skipped — the agent is already running and waking the
+ * queue would fire `onMessageQueued` and surface a misleading "Queued"
+ * acknowledgment for the agent's own self-emission. When false (cross-group
+ * routing — e.g., dispatch sending to dev-team), the wake-up is required so
+ * the target group picks up the new trigger.
  */
 export function injectIpcMessage(
   deps: InjectIpcMessageDeps,
@@ -84,6 +92,7 @@ export function injectIpcMessage(
   text: string,
   senderName: string,
   realTs?: string,
+  sameGroupSelfEmission: boolean = false,
 ): void {
   const now = deps.now ? deps.now() : new Date().toISOString();
   const rand = deps.rand ? deps.rand() : Math.random().toString(36).slice(2, 8);
@@ -96,7 +105,9 @@ export function injectIpcMessage(
     rand,
   });
   deps.storeMessage(row);
-  deps.enqueueMessageCheck(chatJid);
+  if (!sameGroupSelfEmission) {
+    deps.enqueueMessageCheck(chatJid);
+  }
 }
 
 /**

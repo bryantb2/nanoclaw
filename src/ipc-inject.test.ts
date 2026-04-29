@@ -186,7 +186,7 @@ describe('injectIpcMessage', () => {
     );
   });
 
-  it('always enqueues regardless of realTs', () => {
+  it('enqueues regardless of realTs (cross-group routing path)', () => {
     const enqueueMessageCheck = vi.fn();
     injectIpcMessage(
       {
@@ -197,6 +197,70 @@ describe('injectIpcMessage', () => {
       '@Fleet work',
       'ipc:slack_dispatch',
       undefined,
+    );
+    expect(enqueueMessageCheck).toHaveBeenCalledOnce();
+  });
+
+  it('skips enqueueMessageCheck when sameGroupSelfEmission=true', () => {
+    // Agent posts to its own group's channel via send_message — the agent
+    // is already running, so waking the queue would fire the misleading
+    // "Queued — I'm working on something else" notification on the agent's
+    // own self-emission. Storage still happens; only the wake-up is skipped.
+    const storeMessage = vi.fn();
+    const enqueueMessageCheck = vi.fn();
+    injectIpcMessage(
+      {
+        storeMessage,
+        enqueueMessageCheck,
+        now: () => '2026-04-29T03:57:46.000Z',
+        rand: () => 'selfem',
+      },
+      'slack:C0ANT2AL2AY',
+      'KRE-255 approach: ...',
+      'ipc:slack_dev-team',
+      '1777435066.462789',
+      true, // sameGroupSelfEmission
+    );
+    expect(storeMessage).toHaveBeenCalledOnce();
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
+  it('enqueues when sameGroupSelfEmission=false (cross-group dispatch)', () => {
+    // Dispatch routes a ticket to dev-team — different source/target groups.
+    // The dev-team queue MUST wake up to pick up the trigger.
+    const storeMessage = vi.fn();
+    const enqueueMessageCheck = vi.fn();
+    injectIpcMessage(
+      {
+        storeMessage,
+        enqueueMessageCheck,
+        now: () => '2026-04-29T03:57:46.000Z',
+        rand: () => 'crossg',
+      },
+      'slack:C0ANT2AL2AY',
+      '@Fleet [DISPATCH-ROUTED] new ticket',
+      'ipc:slack_dispatch',
+      '1777435066.462789',
+      false, // sameGroupSelfEmission
+    );
+    expect(storeMessage).toHaveBeenCalledOnce();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith('slack:C0ANT2AL2AY');
+  });
+
+  it('defaults sameGroupSelfEmission=false for backward compatibility', () => {
+    // Existing callers that omit the flag get the legacy "always enqueue"
+    // behavior. Only newer callers (processMessageIpc) opt in.
+    const enqueueMessageCheck = vi.fn();
+    injectIpcMessage(
+      {
+        storeMessage: vi.fn(),
+        enqueueMessageCheck,
+      },
+      'slack:dev-team',
+      '@Fleet work',
+      'ipc:slack_dispatch',
+      '1775796300.543699',
+      // no flag passed
     );
     expect(enqueueMessageCheck).toHaveBeenCalledOnce();
   });

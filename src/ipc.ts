@@ -41,6 +41,7 @@ export interface IpcDeps {
     text: string,
     senderName: string,
     realTs?: string,
+    sameGroupSelfEmission?: boolean,
   ) => void;
   uploadFile: (params: {
     channelId: string;
@@ -257,7 +258,19 @@ export async function processMessageIpc(
     validThreadTs ? { threadTs: validThreadTs } : undefined,
   );
   if (deps.injectMessage) {
-    deps.injectMessage(data.chatJid, data.text, `ipc:${sourceGroup}`, sentTs);
+    // Skip queue wake-up when the source group is also the target's owning
+    // group — the agent is posting to its own channel and is already running.
+    // Waking the queue would fire `onMessageQueued` and surface a misleading
+    // "Queued" acknowledgment for the agent's own self-emission.
+    const sameGroupSelfEmission =
+      !!targetGroup && targetGroup.folder === sourceGroup;
+    deps.injectMessage(
+      data.chatJid,
+      data.text,
+      `ipc:${sourceGroup}`,
+      sentTs,
+      sameGroupSelfEmission,
+    );
   }
   logger.info(
     { chatJid: data.chatJid, sourceGroup, sentTs },
