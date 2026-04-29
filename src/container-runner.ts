@@ -20,7 +20,10 @@ import {
 import {
   appendCompletionRecord,
   deleteInFlightTask,
+  findMainGroupJid,
+  getRegisteredGroup,
   insertInFlightTask,
+  storeMessage,
 } from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -98,6 +101,99 @@ export interface CompletionRecordRuntimeOverrides {
   costUsd?: number;
   tokenUsage?: TokenUsage;
   wallClockMs?: number;
+}
+
+/**
+ * Module-level callback wiring for waking the dispatch group's queue when a
+ * cross-group routed completion record gets persisted. Set once at startup
+ * by index.ts (which has access to the GroupQueue). Container-runner stays
+ * decoupled from the queue — it just calls the callback when needed.
+ */
+let enqueueMessageCheckFn: ((groupJid: string) => void) | null = null;
+
+/** Wires the queue's enqueueMessageCheck so completion-record persistence
+ *  can wake the dispatch group on dispatchRouted=true. Called once from
+ *  index.ts at startup. Pass null to clear (used in tests). */
+export function setEnqueueMessageCheckFn(
+  fn: ((groupJid: string) => void) | null,
+): void {
+  enqueueMessageCheckFn = fn;
+}
+
+/**
+ * When a dispatchRouted completion record gets persisted, inject a synthetic
+ * `[COMPLETION]` message into the dispatch group's channel queue so dispatch
+ * can process it via its existing event-driven `[COMPLETION]` handler
+ * (slack_dispatch/CLAUDE.md → "Completion Signal Handling") instead of
+ * waiting for the next hourly build-loop cron tick.
+ *
+ * The message format mirrors the agent-side ping documented in
+ * groups/CLAUDE.md ("Dispatch Notification" section) — agents are *supposed*
+ * to write this themselves via `done-{ts}.json` IPC, but in practice they
+ * sometimes skip it. This orchestrator-side path is the reliable backstop.
+ *
+ * The message is stored in the DB only — it does NOT post to Slack. Dispatch
+ * reads it via getNewMessages on its next queue tick (which we wake here).
+ *
+ * Skips silently when:
+ * - dispatchRouted is false (record came from a non-routed flow)
+ * - source group IS the dispatch group (recursion guard)
+ * - no main group is registered (test fixtures, fresh installs)
+ * - enqueueMessageCheckFn is not wired (test fixtures)
+ */
+export function notifyDispatchOfRoutedCompletion(
+  sourceGroupFolder: string,
+  record: {
+    linearTicketId?: string | null;
+    prUrl?: string | null;
+    branchName?: string | null;
+    repo?: string | null;
+    dispatchRouted: boolean;
+  },
+): void {
+  if (!record.dispatchRouted) return;
+  if (!enqueueMessageCheckFn) return;
+  const dispatchJid = findMainGroupJid();
+  if (!dispatchJid) return;
+
+  // Recursion guard — if the source group IS dispatch (rare; dispatch wrote
+  // its own record and tagged it routed), do not loop the event back.
+  const dispatchGroup = getRegisteredGroup(dispatchJid);
+  if (dispatchGroup && dispatchGroup.folder === sourceGroupFolder) return;
+
+  const ticket = record.linearTicketId ?? 'unknown';
+  const pr = record.prUrl ?? 'no-pr';
+  const groupName = sourceGroupFolder.replace(/^slack_/, '');
+  // Format mirrors the agent-side `[COMPLETION]` ping in groups/CLAUDE.md so
+  // dispatch's existing handler parses it identically.
+  const content =
+    `@Fleet [COMPLETION] ${groupName} finished: ${ticket}. ` +
+    `PR(s): ${pr}. Status: success. Completion record written.`;
+
+  const id = `event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    storeMessage({
+      id,
+      chat_jid: dispatchJid,
+      sender: 'fleet-event',
+      sender_name: 'fleet-event',
+      content,
+      timestamp: new Date().toISOString(),
+      is_from_me: true,
+      is_bot_message: false,
+      origin: 'synthetic',
+    });
+    enqueueMessageCheckFn(dispatchJid);
+    logger.info(
+      { sourceGroupFolder, ticket, dispatchJid, id },
+      'Dispatched fleet-event for routed completion',
+    );
+  } catch (err) {
+    logger.warn(
+      { sourceGroupFolder, ticket, err },
+      'Failed to dispatch fleet-event for routed completion',
+    );
+  }
 }
 
 /**
@@ -209,6 +305,15 @@ export function readCompletionRecordFile(
       },
       'Completion record persisted',
     );
+    // Wake the dispatch group on cross-group routed completions so it can
+    // post a brief acknowledgment without waiting for the hourly cron.
+    notifyDispatchOfRoutedCompletion(groupFolder, {
+      linearTicketId: data.linearTicketId,
+      prUrl: data.prUrl,
+      branchName: data.branchName,
+      repo: data.repo,
+      dispatchRouted: data.dispatchRouted,
+    });
   } catch (err) {
     logger.warn({ groupFolder, err }, 'Failed to read completion record');
   }
