@@ -168,6 +168,7 @@ describe('processMessageIpc', () => {
         '@Fleet [DISPATCH-ROUTED] build feature X',
         'ipc:slack_dispatch',
         '1775796300.543699',
+        false, // sameGroupSelfEmission — dispatch → dev-team is cross-group
       );
     });
 
@@ -196,7 +197,56 @@ describe('processMessageIpc', () => {
         '@Fleet [DISPATCH-ROUTED] send-failed task',
         'ipc:slack_dispatch',
         undefined,
+        false, // sameGroupSelfEmission — dispatch → dev-team is cross-group
       );
+    });
+
+    it('passes sameGroupSelfEmission=true when source group matches target', async () => {
+      // Agent posting to its own channel via send_message — the queue
+      // wake-up must be skipped to avoid the misleading "Queued" notification.
+      const sendMessage = vi.fn().mockResolvedValue('1777435066.462789');
+      const injectMessage = vi.fn();
+
+      await processMessageIpc(
+        {
+          type: 'message',
+          chatJid: 'slack:dev-team',
+          text: 'KRE-255 approach: ContactSupportButton currently renders...',
+        },
+        'slack_dev-team', // source group MATCHES the target's owning group
+        false, // not isMain
+        groups,
+        { sendMessage, injectMessage },
+      );
+
+      expect(injectMessage).toHaveBeenCalledWith(
+        'slack:dev-team',
+        'KRE-255 approach: ContactSupportButton currently renders...',
+        'ipc:slack_dev-team',
+        '1777435066.462789',
+        true, // sameGroupSelfEmission — same group, skip queue wake-up
+      );
+    });
+
+    it('passes sameGroupSelfEmission=false for cross-group routing from main', async () => {
+      // Dispatch (isMain=true) routing to a different group — wake-up needed.
+      const sendMessage = vi.fn().mockResolvedValue('1777435066.462789');
+      const injectMessage = vi.fn();
+
+      await processMessageIpc(
+        {
+          type: 'message',
+          chatJid: 'slack:qa-sentinel',
+          text: '@Fleet [DISPATCH-ROUTED] verify PR #128',
+        },
+        'slack_dispatch', // source group DIFFERS from target's owning group
+        true, // isMain
+        groups,
+        { sendMessage, injectMessage },
+      );
+
+      const callArgs = injectMessage.mock.calls[0];
+      expect(callArgs[4]).toBe(false); // sameGroupSelfEmission
     });
 
     it('does not call injectMessage when sendMessage throws', async () => {

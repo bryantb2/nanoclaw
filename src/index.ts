@@ -126,6 +126,21 @@ let lastAgentTimestamp: Record<string, string> = {};
 const latestThreadTs: Record<string, string> = {};
 let messageLoopRunning = false;
 
+/**
+ * Per-group running count of agent IPC self-emissions (send_message tool
+ * calls that target the same group's channel). Used by runAgent to suppress
+ * the redundant trailing assistant text auto-post when the agent already
+ * communicated via send_message — otherwise terse closing text like
+ * "Standing by." would post as a separate noise message after the agent's
+ * real reply.
+ */
+const ipcSendCounts: Record<string, number> = {};
+
+/** @internal — exported for tests */
+export function _getIpcSendCount(groupFolder: string): number {
+  return ipcSendCounts[groupFolder] || 0;
+}
+
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -304,6 +319,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  // Capture the IPC self-emission count at run start. If the agent uses
+  // send_message during the run, the count increments and we suppress the
+  // redundant trailing assistant text auto-post (the agent already spoke).
+  const ipcSendsAtStart = ipcSendCounts[group.folder] || 0;
 
   const output = await runAgent(
     group,
@@ -319,7 +338,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-        if (text) {
+        const ipcSendsThisRun =
+          (ipcSendCounts[group.folder] || 0) - ipcSendsAtStart;
+        if (text && ipcSendsThisRun === 0) {
           await channel.sendMessage(
             chatJid,
             text,
@@ -327,6 +348,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               ? { threadTs: latestThreadTs[chatJid] || threadTs }
               : undefined,
           );
+          outputSentToUser = true;
+        } else if (text && ipcSendsThisRun > 0) {
+          logger.debug(
+            {
+              group: group.name,
+              ipcSendsThisRun,
+              suppressedLength: text.length,
+            },
+            'Suppressed trailing assistant text auto-post (agent used send_message)',
+          );
+          // Treat as user-facing output for cursor-rollback purposes —
+          // the agent DID communicate, just via send_message instead.
           outputSentToUser = true;
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -977,7 +1010,22 @@ async function main(): Promise<void> {
       const threadOpts = resolveOutboundThreadOpts(opts, latestThreadTs[jid]);
       return channel.sendMessage(jid, text, threadOpts);
     },
-    injectMessage: (chatJid, text, senderName, realTs) =>
+    injectMessage: (
+      chatJid,
+      text,
+      senderName,
+      realTs,
+      sameGroupSelfEmission,
+    ) => {
+      // Track self-emissions so runAgent can suppress the redundant trailing
+      // assistant text auto-post when the agent already used send_message.
+      // senderName format is `ipc:<sourceGroup>` (set by processMessageIpc).
+      if (sameGroupSelfEmission) {
+        const m = senderName.match(/^ipc:(.+)$/);
+        if (m) {
+          ipcSendCounts[m[1]] = (ipcSendCounts[m[1]] || 0) + 1;
+        }
+      }
       injectIpcMessage(
         {
           storeMessage,
@@ -987,7 +1035,9 @@ async function main(): Promise<void> {
         text,
         senderName,
         realTs,
-      ),
+        sameGroupSelfEmission,
+      );
+    },
     uploadFile: async (params) => {
       const channel = channels.find((ch) => ch.uploadFile);
       if (!channel?.uploadFile)
