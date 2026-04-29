@@ -571,7 +571,12 @@ describe('mergeCompletionRecordRuntime', () => {
       { costUsd: 0, inputTokens: 0, outputTokens: 0, wallClockMs: 0 },
       {
         costUsd: 1.7626,
-        tokenUsage: { inputTokens: 34, outputTokens: 5889 },
+        tokenUsage: {
+          inputTokens: 34,
+          outputTokens: 5889,
+          cacheCreationInputTokens: 144918,
+          cacheReadInputTokens: 4640023,
+        },
         wallClockMs: 158234,
       },
     );
@@ -599,7 +604,15 @@ describe('mergeCompletionRecordRuntime', () => {
     // Agent's self-reported value (if any) wins.
     const merged = mergeCompletionRecordRuntime(
       { costUsd: 0.5, inputTokens: 50, outputTokens: 100 },
-      { costUsd: 0, tokenUsage: { inputTokens: 0, outputTokens: 0 } },
+      {
+        costUsd: 0,
+        tokenUsage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      },
     );
     expect(merged.costUsd).toBeCloseTo(0.5, 4);
     expect(merged.inputTokens).toBe(50);
@@ -627,7 +640,12 @@ describe('mergeCompletionRecordRuntime', () => {
       { costUsd: 0.01, inputTokens: 1, outputTokens: 1, wallClockMs: 1 },
       {
         costUsd: 2.5,
-        tokenUsage: { inputTokens: 99, outputTokens: 99 },
+        tokenUsage: {
+          inputTokens: 99,
+          outputTokens: 99,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
         wallClockMs: 99999,
       },
     );
