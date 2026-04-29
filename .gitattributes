@@ -1,0 +1,14 @@
+# Normalize line endings to LF on commit and checkout for all platforms.
+# Prevents Windows CRLF drift after prettier/format runs.
+* text=auto eol=lf
+
+# Explicit binary types (do not normalize)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
