@@ -170,7 +170,12 @@ export function notifyDispatchOfRoutedCompletion(
     `@Fleet [COMPLETION] ${groupName} finished: ${ticket}. ` +
     `PR(s): ${pr}. Status: success. Completion record written.`;
 
-  const id = `event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Use the existing `ipc-{iso}-{rand}` synthetic-id format so isValidThreadTs
+  // (in src/index.ts) filters it out of thread-anchor selection. An `event-`
+  // prefix slipped past the filter and caused agents to attempt thread_ts
+  // values Slack rejected with "invalid_thread_ts", silently dropping the
+  // reply post.
+  const id = `ipc-${new Date().toISOString()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     storeMessage({
       id,

@@ -864,13 +864,20 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
  * Used by the cross-group fleet-event wake-up path to find dispatch's channel
  * without coupling container-runner to the registered_groups map in index.ts.
  *
- * Returns undefined if no group is registered as main — the wake-up is
+ * Filters out Slack DM channels (jids prefixed `slack:D...`) since those are
+ * private operator conversations, not team-facing dispatch channels — fleet
+ * events should go to the public dispatch channel that the team monitors.
+ * Picks the most-recently-added eligible main group (matches the typical
+ * "DM created first during setup, public dispatch channel registered later"
+ * pattern observed in production fleets).
+ *
+ * Returns undefined if no eligible main group is registered — the wake-up is
  * silently skipped in that case (e.g., test fixtures, fresh installs).
  */
 export function findMainGroupJid(): string | undefined {
   const row = db
     .prepare(
-      'SELECT jid FROM registered_groups WHERE is_main = 1 ORDER BY added_at LIMIT 1',
+      "SELECT jid FROM registered_groups WHERE is_main = 1 AND jid NOT LIKE 'slack:D%' ORDER BY added_at DESC LIMIT 1",
     )
     .get() as { jid: string } | undefined;
   return row?.jid;

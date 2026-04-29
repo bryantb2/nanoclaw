@@ -698,7 +698,7 @@ describe('notifyDispatchOfRoutedCompletion', () => {
     const enqueue = vi.fn();
     setEnqueueMessageCheckFn(enqueue);
     const db = await import('./db.js');
-    db.setRegisteredGroup('slack:dispatch', {
+    db.setRegisteredGroup('slack:C0DISPATCH', {
       name: 'Dispatch',
       folder: 'slack_dispatch',
       trigger: '@Fleet',
@@ -730,7 +730,7 @@ describe('notifyDispatchOfRoutedCompletion', () => {
   it('does nothing when enqueueMessageCheckFn is not wired', async () => {
     setEnqueueMessageCheckFn(null);
     const db = await import('./db.js');
-    db.setRegisteredGroup('slack:dispatch', {
+    db.setRegisteredGroup('slack:C0DISPATCH', {
       name: 'Dispatch',
       folder: 'slack_dispatch',
       trigger: '@Fleet',
@@ -751,14 +751,14 @@ describe('notifyDispatchOfRoutedCompletion', () => {
     const enqueue = vi.fn();
     setEnqueueMessageCheckFn(enqueue);
     const db = await import('./db.js');
-    db.setRegisteredGroup('slack:dispatch', {
+    db.setRegisteredGroup('slack:C0DISPATCH', {
       name: 'Dispatch',
       folder: 'slack_dispatch',
       trigger: '@Fleet',
       added_at: '2024-01-01T00:00:00.000Z',
       isMain: true,
     });
-    db.storeChatMetadata('slack:dispatch', '2024-01-01T00:00:00.000Z');
+    db.storeChatMetadata('slack:C0DISPATCH', '2024-01-01T00:00:00.000Z');
 
     notifyDispatchOfRoutedCompletion('slack_dev-team', {
       linearTicketId: 'KRE-186',
@@ -768,12 +768,12 @@ describe('notifyDispatchOfRoutedCompletion', () => {
       dispatchRouted: true,
     });
 
-    expect(enqueue).toHaveBeenCalledWith('slack:dispatch');
+    expect(enqueue).toHaveBeenCalledWith('slack:C0DISPATCH');
 
     // Verify the synthetic message landed in dispatch's queue and is visible
     // to getNewMessages (is_bot_message=0 + bot-prefix filter).
     const { messages } = db.getNewMessages(
-      ['slack:dispatch'],
+      ['slack:C0DISPATCH'],
       '2020-01-01T00:00:00.000Z',
       'Fleet',
     );
@@ -792,7 +792,7 @@ describe('notifyDispatchOfRoutedCompletion', () => {
     const enqueue = vi.fn();
     setEnqueueMessageCheckFn(enqueue);
     const db = await import('./db.js');
-    db.setRegisteredGroup('slack:dispatch', {
+    db.setRegisteredGroup('slack:C0DISPATCH', {
       name: 'Dispatch',
       folder: 'slack_dispatch',
       trigger: '@Fleet',
@@ -812,14 +812,14 @@ describe('notifyDispatchOfRoutedCompletion', () => {
     const enqueue = vi.fn();
     setEnqueueMessageCheckFn(enqueue);
     const db = await import('./db.js');
-    db.setRegisteredGroup('slack:dispatch', {
+    db.setRegisteredGroup('slack:C0DISPATCH', {
       name: 'Dispatch',
       folder: 'slack_dispatch',
       trigger: '@Fleet',
       added_at: '2024-01-01T00:00:00.000Z',
       isMain: true,
     });
-    db.storeChatMetadata('slack:dispatch', '2024-01-01T00:00:00.000Z');
+    db.storeChatMetadata('slack:C0DISPATCH', '2024-01-01T00:00:00.000Z');
 
     notifyDispatchOfRoutedCompletion('slack_dev-team', {
       linearTicketId: null, // null fields
@@ -831,11 +831,82 @@ describe('notifyDispatchOfRoutedCompletion', () => {
 
     expect(enqueue).toHaveBeenCalledOnce();
     const { messages } = db.getNewMessages(
-      ['slack:dispatch'],
+      ['slack:C0DISPATCH'],
       '2020-01-01T00:00:00.000Z',
       'Fleet',
     );
     expect(messages[0].content).toContain('finished: unknown');
     expect(messages[0].content).toContain('PR(s): no-pr');
+  });
+
+  it('prefers a public channel over a DM when both are registered as main', async () => {
+    // Production fleets often have BOTH the operator's DM with Fleet AND
+    // the public #dispatch channel registered with isMain=true. Fleet events
+    // must go to the public channel (team-visible), not the operator's DM.
+    // Slack DM channel JIDs start with `slack:D...`, public channels with
+    // `slack:C...`. The helper filters DMs and picks the most-recently-added
+    // eligible main group.
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    // DM (older, registered first during setup):
+    db.setRegisteredGroup('slack:D0OPDM', {
+      name: 'main',
+      folder: 'slack_main',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    // Public dispatch channel (newer):
+    db.setRegisteredGroup('slack:C0DISPATCH', {
+      name: 'dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-06-01T00:00:00.000Z',
+      isMain: true,
+    });
+    db.storeChatMetadata('slack:C0DISPATCH', '2024-06-01T00:00:00.000Z');
+
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: 'KRE-100',
+      prUrl: 'https://github.com/x/y/pull/1',
+      dispatchRouted: true,
+    });
+
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith('slack:C0DISPATCH');
+    expect(enqueue).not.toHaveBeenCalledWith('slack:D0OPDM');
+  });
+
+  it('synthetic message id uses the ipc- prefix so isValidThreadTs filters it', async () => {
+    // Regression guard: the original implementation used `event-{ts}-{rand}`
+    // which slipped past the existing isValidThreadTs filter (in src/index.ts)
+    // and caused agents to attempt thread_ts values Slack rejected with
+    // "invalid_thread_ts", silently dropping the dispatch summary post.
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:C0DISPATCH', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    db.storeChatMetadata('slack:C0DISPATCH', '2024-01-01T00:00:00.000Z');
+
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: 'KRE-100',
+      prUrl: 'https://github.com/x/y/pull/1',
+      dispatchRouted: true,
+    });
+
+    const { messages } = db.getNewMessages(
+      ['slack:C0DISPATCH'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toMatch(/^ipc-/);
+    expect(messages[0].id).not.toMatch(/^event-/);
   });
 });
