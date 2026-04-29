@@ -268,6 +268,22 @@ export function isSubstantiveApproach(text: string): boolean {
   return !APPROACH_BLOCKLIST.some(phrase => lower.includes(phrase));
 }
 
+export const APPROACH_INDICATORS: readonly string[] = [
+  "plan", "approach", "implement", "change", "add", "modify",
+  "create", "refactor", "update", "build", "reuse", "extend",
+  "integrate", "wire", "connect", "route", "endpoint", "component",
+  "schema", "migration", "model", "api", "database", "ui",
+  "test", "fix", "replace", "remove", "extract", "split",
+  "merge", "configure", "deploy", "hook", "gate", "validate"
+];
+
+export function isApproachContent(text: string): boolean {
+  if (!isSubstantiveApproach(text)) return false;
+  const words = text.toLowerCase().split(/[\s.,;:!?()\[\]{}"'`\/\\]+/).filter(Boolean);
+  const matchCount = APPROACH_INDICATORS.filter(ind => words.includes(ind)).length;
+  return matchCount >= 2;
+}
+
 const APPROACH_MARKER_PATH = '/workspace/ipc/approach-posted.json';
 const TEST_PASSED_MARKER_PATH = '/workspace/ipc/test-passed.json';
 
@@ -307,15 +323,18 @@ function createGateHook(isMain: boolean): HookCallback {
     const command = (ptu.tool_input?.command as string) ?? '';
     if (!command.includes('git commit')) return {};
 
-    // Check if approach has been posted (marker file written by ipc-mcp-stdio.ts)
-    if (fs.existsSync(APPROACH_MARKER_PATH)) return {};
+    // Validate marker content, not just existence
+    try {
+      const data = JSON.parse(fs.readFileSync(APPROACH_MARKER_PATH, 'utf-8'));
+      if (typeof data.messageText === 'string' && isApproachContent(data.messageText)) return {};
+    } catch { /* marker missing or invalid — fall through to deny */ }
 
     return {
-      systemMessage: 'You must post your implementation approach to Slack via send_message before writing any code. The message must be >100 characters and describe what you plan to do.',
+      systemMessage: 'You must post your implementation approach to Slack via send_message before committing. The message must describe: (a) what you plan to build or change, (b) which existing patterns you will reuse, (c) how it fits the architecture. Generic acknowledgments or progress updates do not satisfy this gate.',
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: 'Approach not posted. Call send_message with your implementation plan (>100 chars) first.',
+        permissionDecisionReason: 'Approach not posted or message did not contain implementation specifics. Call send_message describing your approach (what, how, which patterns) first.',
       },
     };
   };

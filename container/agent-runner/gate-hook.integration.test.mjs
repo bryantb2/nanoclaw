@@ -13,9 +13,18 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-// --- Replicated gate logic (must stay in sync with index.ts lines 258-291) ---
+// --- Replicated gate logic (must stay in sync with index.ts) ---
 
 const APPROACH_BLOCKLIST = ["on it", "confirmed", "working on this", "acknowledged", "queued"];
+
+const APPROACH_INDICATORS = [
+  "plan", "approach", "implement", "change", "add", "modify",
+  "create", "refactor", "update", "build", "reuse", "extend",
+  "integrate", "wire", "connect", "route", "endpoint", "component",
+  "schema", "migration", "model", "api", "database", "ui",
+  "test", "fix", "replace", "remove", "extract", "split",
+  "merge", "configure", "deploy", "hook", "gate", "validate"
+];
 
 function isSubstantiveApproach(text) {
   if (text.length <= 100) return false;
@@ -23,9 +32,18 @@ function isSubstantiveApproach(text) {
   return !APPROACH_BLOCKLIST.some(phrase => lower.includes(phrase));
 }
 
+function isApproachContent(text) {
+  if (!isSubstantiveApproach(text)) return false;
+  const words = text.toLowerCase().split(/[\s.,;:!?()\[\]{}"'`\/\\]+/).filter(Boolean);
+  const matchCount = APPROACH_INDICATORS.filter(ind => words.includes(ind)).length;
+  return matchCount >= 2;
+}
+
 /**
  * Replicated createGateHook — uses a configurable marker path (instead of
  * the hardcoded /workspace/ipc/approach-posted.json) so tests can use temp dirs.
+ *
+ * Strengthened: validates marker CONTENT via isApproachContent, not just existence.
  */
 function createGateHook(isMain, markerPath) {
   return async (input) => {
@@ -38,14 +56,17 @@ function createGateHook(isMain, markerPath) {
     const command = input.tool_input?.command ?? '';
     if (!command.includes('git commit')) return {};
 
-    if (fs.existsSync(markerPath)) return {};
+    try {
+      const data = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
+      if (typeof data.messageText === 'string' && isApproachContent(data.messageText)) return {};
+    } catch { /* marker missing or invalid — fall through to deny */ }
 
     return {
-      systemMessage: 'You must post your implementation approach to Slack via send_message before writing any code. The message must be >100 characters and describe what you plan to do.',
+      systemMessage: 'You must post your implementation approach to Slack via send_message before committing. The message must describe: (a) what you plan to build or change, (b) which existing patterns you will reuse, (c) how it fits the architecture. Generic acknowledgments or progress updates do not satisfy this gate.',
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: 'Approach not posted. Call send_message with your implementation plan (>100 chars) first.',
+        permissionDecisionReason: 'Approach not posted or message did not contain implementation specifics. Call send_message describing your approach (what, how, which patterns) first.',
       },
     };
   };
@@ -61,11 +82,13 @@ function makePreToolUseInput(toolName, command) {
   };
 }
 
-function writeMarkerFile(markerPath) {
+function writeMarkerFile(markerPath, messageText) {
+  const text = messageText ?? 'My approach: implement the feature by creating a new component, reusing the existing utilities, and adding a database migration for the new schema table with proper test coverage.';
   fs.mkdirSync(path.dirname(markerPath), { recursive: true });
   fs.writeFileSync(markerPath, JSON.stringify({
     postedAt: new Date().toISOString(),
-    textLength: 150,
+    textLength: text.length,
+    messageText: text,
   }));
 }
 
@@ -124,14 +147,26 @@ describe('createGateHook integration', () => {
       expect(result).toEqual({});
     });
 
-    it('marker content is irrelevant — only existence matters', async () => {
+    it('marker with empty JSON denies commit', async () => {
       fs.mkdirSync(path.dirname(markerPath), { recursive: true });
-      fs.writeFileSync(markerPath, '{}'); // minimal content
+      fs.writeFileSync(markerPath, '{}'); // no messageText field
       const hook = createGateHook(false, markerPath);
       const input = makePreToolUseInput('Bash', 'git commit -m "test"');
 
       const result = await hook(input);
-      expect(result).toEqual({});
+      expect(result.hookSpecificOutput).toBeDefined();
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('marker exists but messageText fails content check — denies commit', async () => {
+      const genericMessage = 'Running in parallel on this task, will report back with results soon enough to keep the team updated on all progress made here during this work session today';
+      writeMarkerFile(markerPath, genericMessage);
+      const hook = createGateHook(false, markerPath);
+      const input = makePreToolUseInput('Bash', 'git commit -m "feat"');
+
+      const result = await hook(input);
+      expect(result.hookSpecificOutput).toBeDefined();
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
     });
   });
 

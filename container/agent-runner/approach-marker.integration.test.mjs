@@ -31,6 +31,7 @@ function writeApproachMarkerIfQualifying(text, isMain, markerPath) {
     fs.writeFileSync(markerPath, JSON.stringify({
       postedAt: new Date().toISOString(),
       textLength: text.length,
+      messageText: text,
     }));
     return true;
   }
@@ -63,6 +64,7 @@ describe('approach marker write integration', () => {
       const content = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
       expect(content.postedAt).toBeDefined();
       expect(content.textLength).toBe(text.length);
+      expect(content.messageText).toBe(text);
     });
 
     it('marker file is valid JSON with expected schema', () => {
@@ -73,6 +75,8 @@ describe('approach marker write integration', () => {
       expect(typeof content.postedAt).toBe('string');
       expect(typeof content.textLength).toBe('number');
       expect(content.textLength).toBeGreaterThan(100);
+      expect(typeof content.messageText).toBe('string');
+      expect(content.messageText).toBe(text);
       // Validate ISO 8601 timestamp
       expect(new Date(content.postedAt).toISOString()).toBe(content.postedAt);
     });

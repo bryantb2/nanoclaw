@@ -1533,16 +1533,30 @@ describe('appendCompletionRecord', () => {
 
     const db = _getDb();
     const row = db
-      .prepare('SELECT screenshot_paths FROM completion_records WHERE group_folder = ?')
+      .prepare(
+        'SELECT screenshot_paths FROM completion_records WHERE group_folder = ?',
+      )
       .get('dev-team') as Record<string, unknown>;
     expect(typeof row.screenshot_paths).toBe('string');
     expect(JSON.parse(row.screenshot_paths as string)).toEqual(paths);
   });
 
   it('Test 6: multiple completion records for same group are all persisted (no upsert)', () => {
-    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.01 });
-    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.02 });
-    appendCompletionRecord({ groupFolder: 'dev-team', chatJid: 'slack:C123', costUsd: 0.03 });
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.01,
+    });
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.02,
+    });
+    appendCompletionRecord({
+      groupFolder: 'dev-team',
+      chatJid: 'slack:C123',
+      costUsd: 0.03,
+    });
 
     const db = _getDb();
     const rows = db

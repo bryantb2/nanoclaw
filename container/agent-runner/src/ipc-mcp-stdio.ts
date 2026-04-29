@@ -77,6 +77,7 @@ server.tool(
       fs.writeFileSync(APPROACH_MARKER_PATH, JSON.stringify({
         postedAt: new Date().toISOString(),
         textLength: args.text.length,
+        messageText: args.text,
       }));
     }
 
