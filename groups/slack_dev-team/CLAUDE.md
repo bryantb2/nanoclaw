@@ -74,7 +74,11 @@ Before creating any PR via `gh pr create`, you MUST write a test-passed marker f
 4. If all tests pass AND coverage did not regress, write the marker file:
 
 ```bash
-cat > /workspace/ipc/test-passed.json << 'MARKER'
+# Generate the timestamp at write time — DO NOT use a literal timestamp from
+# this example or invent a "round" time. Use $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# or equivalent to produce the actual moment of writing.
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > /workspace/ipc/test-passed.json << MARKER
 {
   "passed": true,
   "testCount": 42,
@@ -82,17 +86,19 @@ cat > /workspace/ipc/test-passed.json << 'MARKER'
   "coverageBefore": 82.3,
   "coverageAfter": 83.1,
   "coverageDelta": 0.8,
-  "passedAt": "2026-04-13T12:00:00.000Z"
+  "passedAt": "$NOW"
 }
 MARKER
 ```
+
+Note: the heredoc is **unquoted** (`<< MARKER`, not `<< 'MARKER'`) so `$NOW` expands to the actual current timestamp. If you keep it single-quoted, the timestamp will not interpolate and the marker will contain the literal string `$NOW`, failing validation.
 
 ### Required Fields
 
 - **`passed`** (boolean, required): Must be `true`. If any test fails, do NOT write the marker.
 - **`coverageAfter`** (number, required): Coverage percentage after your changes.
 - **`coverageDelta`** (number, optional but checked): If present and negative, PR creation is blocked (coverage regression).
-- **`testCount`**, **`failCount`**, **`coverageBefore`**, **`passedAt`**: Recommended for traceability but not enforced by the gate.
+- **`testCount`**, **`failCount`**, **`coverageBefore`**, **`passedAt`**: Recommended for traceability but not enforced by the gate. **`passedAt` must reflect the actual write time — never copy a literal timestamp from documentation examples.**
 
 ### Key Rules
 

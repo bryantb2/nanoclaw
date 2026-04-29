@@ -109,6 +109,7 @@ import {
   runContainerAgent,
   ContainerOutput,
   TokenUsage,
+  mergeCompletionRecordRuntime,
 } from './container-runner.js';
 import fs from 'fs';
 import path from 'path';
@@ -559,5 +560,101 @@ describe('container-runner agent-runner cache refresh wiring', () => {
     });
 
     expect(renameCall).toBeDefined();
+  });
+});
+
+describe('mergeCompletionRecordRuntime', () => {
+  it('uses runtime cost/tokens/wallClock when agent values are 0', () => {
+    // The "all zeros" case — agent has no SDK access so writes 0,0,0.
+    // Runtime captures real values from the streaming output.
+    const merged = mergeCompletionRecordRuntime(
+      { costUsd: 0, inputTokens: 0, outputTokens: 0, wallClockMs: 0 },
+      {
+        costUsd: 1.7626,
+        tokenUsage: { inputTokens: 34, outputTokens: 5889 },
+        wallClockMs: 158234,
+      },
+    );
+    expect(merged.costUsd).toBeCloseTo(1.7626, 4);
+    expect(merged.inputTokens).toBe(34);
+    expect(merged.outputTokens).toBe(5889);
+    expect(merged.wallClockMs).toBe(158234);
+  });
+
+  it('falls back to agent values when no runtime override is supplied', () => {
+    const merged = mergeCompletionRecordRuntime({
+      costUsd: 0.42,
+      inputTokens: 100,
+      outputTokens: 200,
+      wallClockMs: 5000,
+    });
+    expect(merged.costUsd).toBeCloseTo(0.42, 4);
+    expect(merged.inputTokens).toBe(100);
+    expect(merged.outputTokens).toBe(200);
+    expect(merged.wallClockMs).toBe(5000);
+  });
+
+  it('keeps agent value when runtime is 0 (orchestrator captured nothing)', () => {
+    // Edge case: runtime cost = 0 means orchestrator never saw a result marker.
+    // Agent's self-reported value (if any) wins.
+    const merged = mergeCompletionRecordRuntime(
+      { costUsd: 0.5, inputTokens: 50, outputTokens: 100 },
+      { costUsd: 0, tokenUsage: { inputTokens: 0, outputTokens: 0 } },
+    );
+    expect(merged.costUsd).toBeCloseTo(0.5, 4);
+    expect(merged.inputTokens).toBe(50);
+    expect(merged.outputTokens).toBe(100);
+  });
+
+  it('returns 0/null when both agent and runtime are missing/zero', () => {
+    const merged = mergeCompletionRecordRuntime({});
+    expect(merged.costUsd).toBe(0);
+    expect(merged.inputTokens).toBeNull();
+    expect(merged.outputTokens).toBeNull();
+    expect(merged.wallClockMs).toBeNull();
+  });
+
+  it('preserves agent costUsd when runtime undefined', () => {
+    const merged = mergeCompletionRecordRuntime({ costUsd: 0.99 }, undefined);
+    expect(merged.costUsd).toBeCloseTo(0.99, 4);
+  });
+
+  it('uses runtime even when agent supplied a different positive value (orchestrator wins)', () => {
+    // The agent might dutifully copy the cost from somewhere stale.
+    // The orchestrator's value is authoritative since it's pulled from the
+    // SDK result marker the agent process can't see.
+    const merged = mergeCompletionRecordRuntime(
+      { costUsd: 0.01, inputTokens: 1, outputTokens: 1, wallClockMs: 1 },
+      {
+        costUsd: 2.5,
+        tokenUsage: { inputTokens: 99, outputTokens: 99 },
+        wallClockMs: 99999,
+      },
+    );
+    expect(merged.costUsd).toBeCloseTo(2.5, 4);
+    expect(merged.inputTokens).toBe(99);
+    expect(merged.outputTokens).toBe(99);
+    expect(merged.wallClockMs).toBe(99999);
+  });
+
+  it('handles partial runtime overrides (cost only, no tokens)', () => {
+    const merged = mergeCompletionRecordRuntime(
+      { costUsd: 0, inputTokens: 50, outputTokens: 100, wallClockMs: 5000 },
+      { costUsd: 1.5 }, // no tokenUsage, no wallClockMs
+    );
+    expect(merged.costUsd).toBeCloseTo(1.5, 4);
+    expect(merged.inputTokens).toBe(50);
+    expect(merged.outputTokens).toBe(100);
+    expect(merged.wallClockMs).toBe(5000);
+  });
+
+  it('handles agent inputTokens=null (schema allows null)', () => {
+    const merged = mergeCompletionRecordRuntime(
+      { costUsd: 0, inputTokens: null, outputTokens: null, wallClockMs: null },
+      undefined,
+    );
+    expect(merged.inputTokens).toBeNull();
+    expect(merged.outputTokens).toBeNull();
+    expect(merged.wallClockMs).toBeNull();
   });
 });
