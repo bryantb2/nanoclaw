@@ -110,6 +110,8 @@ import {
   ContainerOutput,
   TokenUsage,
   mergeCompletionRecordRuntime,
+  notifyDispatchOfRoutedCompletion,
+  setEnqueueMessageCheckFn,
 } from './container-runner.js';
 import fs from 'fs';
 import path from 'path';
@@ -674,5 +676,166 @@ describe('mergeCompletionRecordRuntime', () => {
     expect(merged.inputTokens).toBeNull();
     expect(merged.outputTokens).toBeNull();
     expect(merged.wallClockMs).toBeNull();
+  });
+});
+
+describe('notifyDispatchOfRoutedCompletion', () => {
+  // These tests exercise the cross-group fleet-event wake-up path. They use
+  // a real (in-memory) test DB so we can verify storeMessage actually lands
+  // a row, plus a mock enqueueMessageCheck callback to verify wake-up fires.
+
+  beforeEach(async () => {
+    const db = await import('./db.js');
+    db._initTestDatabase();
+    setEnqueueMessageCheckFn(null); // reset between tests
+  });
+
+  afterEach(() => {
+    setEnqueueMessageCheckFn(null);
+  });
+
+  it('does nothing when dispatchRouted is false', async () => {
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:dispatch', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: 'KRE-186',
+      prUrl: 'https://github.com/x/y/pull/130',
+      branchName: 'fleet/kre-186',
+      repo: 'x/y',
+      dispatchRouted: false, // ← key
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no main group is registered', async () => {
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    // Note: no setRegisteredGroup call — DB is empty
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: 'KRE-186',
+      prUrl: 'https://github.com/x/y/pull/130',
+      dispatchRouted: true,
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when enqueueMessageCheckFn is not wired', async () => {
+    setEnqueueMessageCheckFn(null);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:dispatch', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    // Should not throw — early-returns silently
+    expect(() =>
+      notifyDispatchOfRoutedCompletion('slack_dev-team', {
+        linearTicketId: 'KRE-186',
+        prUrl: 'https://github.com/x/y/pull/130',
+        dispatchRouted: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('wakes dispatch and stores a [COMPLETION] message on routed completion', async () => {
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:dispatch', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    db.storeChatMetadata('slack:dispatch', '2024-01-01T00:00:00.000Z');
+
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: 'KRE-186',
+      prUrl: 'https://github.com/x/y/pull/130',
+      branchName: 'fleet/kre-186',
+      repo: 'x/y',
+      dispatchRouted: true,
+    });
+
+    expect(enqueue).toHaveBeenCalledWith('slack:dispatch');
+
+    // Verify the synthetic message landed in dispatch's queue and is visible
+    // to getNewMessages (is_bot_message=0 + bot-prefix filter).
+    const { messages } = db.getNewMessages(
+      ['slack:dispatch'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('[COMPLETION]');
+    expect(messages[0].content).toContain('dev-team finished: KRE-186');
+    expect(messages[0].content).toContain(
+      'PR(s): https://github.com/x/y/pull/130',
+    );
+    expect(messages[0].sender_name).toBe('fleet-event');
+    expect(messages[0].is_from_me).toBe(1);
+    expect(messages[0].origin).toBe('synthetic');
+  });
+
+  it('skips when source group IS the dispatch group (recursion guard)', async () => {
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:dispatch', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    notifyDispatchOfRoutedCompletion('slack_dispatch', {
+      // ← source IS dispatch
+      linearTicketId: 'KRE-999',
+      prUrl: null,
+      dispatchRouted: true,
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('handles missing optional fields with placeholder values', async () => {
+    const enqueue = vi.fn();
+    setEnqueueMessageCheckFn(enqueue);
+    const db = await import('./db.js');
+    db.setRegisteredGroup('slack:dispatch', {
+      name: 'Dispatch',
+      folder: 'slack_dispatch',
+      trigger: '@Fleet',
+      added_at: '2024-01-01T00:00:00.000Z',
+      isMain: true,
+    });
+    db.storeChatMetadata('slack:dispatch', '2024-01-01T00:00:00.000Z');
+
+    notifyDispatchOfRoutedCompletion('slack_dev-team', {
+      linearTicketId: null, // null fields
+      prUrl: null,
+      branchName: null,
+      repo: null,
+      dispatchRouted: true,
+    });
+
+    expect(enqueue).toHaveBeenCalledOnce();
+    const { messages } = db.getNewMessages(
+      ['slack:dispatch'],
+      '2020-01-01T00:00:00.000Z',
+      'Fleet',
+    );
+    expect(messages[0].content).toContain('finished: unknown');
+    expect(messages[0].content).toContain('PR(s): no-pr');
   });
 });

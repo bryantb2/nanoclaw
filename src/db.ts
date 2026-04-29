@@ -859,6 +859,23 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+/**
+ * Returns the JID of the main (isMain=true) registered group, if one exists.
+ * Used by the cross-group fleet-event wake-up path to find dispatch's channel
+ * without coupling container-runner to the registered_groups map in index.ts.
+ *
+ * Returns undefined if no group is registered as main — the wake-up is
+ * silently skipped in that case (e.g., test fixtures, fresh installs).
+ */
+export function findMainGroupJid(): string | undefined {
+  const row = db
+    .prepare(
+      'SELECT jid FROM registered_groups WHERE is_main = 1 ORDER BY added_at LIMIT 1',
+    )
+    .get() as { jid: string } | undefined;
+  return row?.jid;
+}
+
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
     jid: string;

@@ -20,6 +20,7 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
+  setEnqueueMessageCheckFn,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
@@ -1073,6 +1074,10 @@ async function main(): Promise<void> {
     },
   });
   queue.setProcessMessagesFn(processGroupMessages);
+  // Wire fleet-event wake-up so cross-group routed completion records can
+  // wake the dispatch group's queue immediately (instead of waiting for the
+  // hourly build-loop cron). See notifyDispatchOfRoutedCompletion.
+  setEnqueueMessageCheckFn((jid) => queue.enqueueMessageCheck(jid));
   queue.setOnMessageQueued((groupJid) => {
     // Don't send "Queued" for isMain groups — they process all messages
     // inline via piped stdin. The message isn't actually queued; the
